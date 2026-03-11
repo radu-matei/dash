@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -79,7 +78,7 @@ func (r *Runner) Start() error {
 
 	cmd := exec.Command(r.spinBin, r.args...)
 	cmd.Env = append(os.Environ(), r.extraEnv...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttr(cmd)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -109,12 +108,12 @@ func (r *Runner) Start() error {
 	return nil
 }
 
-// Stop sends SIGTERM to the entire process group.
+// Stop sends SIGTERM to the entire process group (Unix) or kills the process (Windows).
 func (r *Runner) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.pgid > 0 {
-		_ = syscall.Kill(-r.pgid, syscall.SIGTERM)
+		terminateProcessGroup(r.pgid, r.cmd)
 	}
 }
 
@@ -124,13 +123,14 @@ func (r *Runner) Stop() {
 func (r *Runner) Restart() error {
 	r.mu.Lock()
 	pgid := r.pgid
+	cmd  := r.cmd
 	done := r.done
 	r.mu.Unlock()
 
 	r.logFn("system", "▶  Restarting Spin app…")
 
 	if pgid > 0 {
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		terminateProcessGroup(pgid, cmd)
 	}
 
 	// Wait for the old process to exit cleanly, then force-kill if needed.
@@ -138,7 +138,7 @@ func (r *Runner) Restart() error {
 	case <-done:
 	case <-time.After(8 * time.Second):
 		if pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			killProcessGroup(pgid, cmd)
 		}
 		select {
 		case <-done:
