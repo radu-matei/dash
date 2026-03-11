@@ -53,7 +53,11 @@ jobs:
         run: spin plugins install --url https://github.com/itowlson/spin-pluginify/releases/download/canary/pluginify.json --yes
 
       - name: Build Plugin Binary
-        run: GOOS=${{ matrix.config.goOs }} GOARCH=${{ matrix.config.goArch }} go build -o ${{ env.PROGRAM_NAME }} main.go
+        run: |
+          SHA=$(git rev-parse --short HEAD)
+          GOOS=${{ matrix.config.goOs }} GOARCH=${{ matrix.config.goArch }} \
+            go build -ldflags "-X github.com/spinframework/dash/cmd.CommitSHA=${SHA}" \
+            -o ${{ env.PROGRAM_NAME }} main.go
 
       - name: Create Arch-Specific Plugin Manifest
         run: spin pluginify --arch ${{ matrix.config.pluginifyArch }} --os ${{ matrix.config.pluginifyOs }}

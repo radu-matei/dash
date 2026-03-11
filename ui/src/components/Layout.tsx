@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
   Activity,
@@ -12,16 +13,16 @@ import { useAppStore } from '../store/appContext'
 
 const STATUS_COLORS: Record<string, string> = {
   starting: 'bg-amber-400 animate-pulse',
-  running:  'bg-green-500',
-  stopped:  'bg-gray-400',
-  error:    'bg-red-500',
+  running: 'bg-green-500',
+  stopped: 'bg-gray-400',
+  error: 'bg-red-500',
 }
 
 const STATUS_LABELS: Record<string, string> = {
   starting: 'Starting',
-  running:  'Running',
-  stopped:  'Stopped',
-  error:    'Error',
+  running: 'Running',
+  stopped: 'Stopped',
+  error: 'Error',
 }
 
 // ─── Navigation config ────────────────────────────────────────────────────────
@@ -30,10 +31,10 @@ const NAV_SECTIONS = [
   {
     label: 'Application',
     items: [
-      { to: '/app',     label: 'Overview',  Icon: LayoutDashboard },
-      { to: '/logs',    label: 'Logs',      Icon: ScrollText },
-      { to: '/traces',  label: 'Traces',    Icon: Activity },
-      { to: '/metrics', label: 'Metrics',   Icon: TrendingUp },
+      { to: '/app', label: 'Overview', Icon: LayoutDashboard },
+      { to: '/logs', label: 'Logs', Icon: ScrollText },
+      { to: '/traces', label: 'Traces', Icon: Activity },
+      { to: '/metrics', label: 'Metrics', Icon: TrendingUp },
     ],
   },
 ]
@@ -41,9 +42,19 @@ const NAV_SECTIONS = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const REPO = 'https://github.com/radu-matei/dash'
+
 export default function Layout() {
   const { app } = useAppStore()
   const status = app?.status ?? 'starting'
+
+  const [sha, setSha] = useState<string | null>(null)
+  useEffect(() => {
+    fetch('/api/version')
+      .then(r => r.json())
+      .then((d: { sha?: string }) => setSha(d.sha ?? null))
+      .catch(() => { })
+  }, [])
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
@@ -115,9 +126,23 @@ export default function Layout() {
 
         {/* Footer */}
         <div className="px-4 py-3 border-t border-gray-100 shrink-0">
-          <div className="flex items-center gap-2">
-            <img src="/spin-favicon.png" className="w-4 h-4 opacity-40" alt="" />
-            <span className="text-xs text-gray-400">spin dashboard v0.1</span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <img src="/spin-favicon.png" className="w-4 h-4 opacity-40 shrink-0" alt="" />
+            <span className="text-xs text-gray-400 shrink-0">spin dashboard</span>
+            {sha && (
+              <>
+                <span className="text-gray-300 text-xs">·</span>
+                <a
+                  href={`${REPO}/commit/${sha.replace(/-dev$/, '')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-gray-400 hover:text-gray-600 font-mono truncate transition-colors"
+                  title={`Commit ${sha}`}
+                >
+                  {sha}
+                </a>
+              </>
+            )}
           </div>
         </div>
       </aside>

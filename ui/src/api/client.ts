@@ -88,8 +88,14 @@ export const getApp = (signal?: AbortSignal) => get<AppInfo>('/api/app', signal)
 // ── Logs ──────────────────────────────────────────────────────────────────────
 
 export interface LogLine {
-  stream: 'stdout' | 'stderr' | 'system'
+  stream: 'stdout' | 'stderr' | 'system' | 'component'
+  /** set when stream === 'component' */
+  component?: string
+  /** 'stdout' | 'stderr' when stream === 'component' */
+  subStream?: string
   line: string
+  /** injected by the log store — ms since epoch when the line arrived */
+  receivedAt?: number
 }
 
 export function subscribeToLogs(

@@ -10,8 +10,10 @@ const maxHistory = 5_000
 
 // LogLine is the payload broadcast to SSE clients.
 type LogLine struct {
-	Stream string `json:"stream"` // "stdout" | "stderr" | "system"
-	Line   string `json:"line"`
+	Stream    string `json:"stream"`              // "stdout" | "stderr" | "system" | "component"
+	Component string `json:"component,omitempty"` // set when Stream == "component"
+	SubStream string `json:"subStream,omitempty"` // "stdout" | "stderr" when Stream == "component"
+	Line      string `json:"line"`
 }
 
 // Hub manages SSE client connections and broadcasts log lines.
@@ -33,7 +35,15 @@ func NewHub() *Hub {
 // Publish stores the line in the history buffer and broadcasts it to
 // all currently-connected SSE clients.
 func (h *Hub) Publish(stream, line string) {
-	msg := LogLine{Stream: stream, Line: line}
+	h.publish(LogLine{Stream: stream, Line: line})
+}
+
+// PublishComponent publishes a line from a specific component's log file.
+func (h *Hub) PublishComponent(component, subStream, line string) {
+	h.publish(LogLine{Stream: "component", Component: component, SubStream: subStream, Line: line})
+}
+
+func (h *Hub) publish(msg LogLine) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

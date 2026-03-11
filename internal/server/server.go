@@ -37,6 +37,9 @@ type Options struct {
 	// AllowMutations controls whether spin.toml mutation endpoints are active.
 	// Must be explicitly opted into via --allow-edits on the CLI.
 	AllowMutations bool
+	// CommitSHA is the git commit hash injected at build time (via ldflags).
+	// Falls back to "dev" for local builds.
+	CommitSHA string
 }
 
 // New builds and returns a configured http.ServeMux ready to Serve.
@@ -55,6 +58,7 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/traces", tracesHandler(opts.OTel))
 	mux.HandleFunc("/api/otel-metrics", otelMetricsHandler(opts.OTelMetrics))
 	mux.HandleFunc("/api/templates", templatesHandler())
+	mux.HandleFunc("/api/version", versionHandler(opts.CommitSHA))
 
 	// --- Mutation routes (require --allow-edits) ---
 	mutationGuard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -73,6 +77,9 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/remove-binding", mutationGuard(removeBindingHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/restart", restartHandler(opts.Runner))
 	mux.HandleFunc("/api/build-restart", buildAndRestartHandler(&opts))
+
+	// Tail .spin/logs/<comp>_{stdout,stderr}.txt and forward new lines to hub.
+	go watchComponentLogs(opts.Dir, opts.Hub)
 
 	// --- SPA static file handler ---
 	distFS, err := fs.Sub(embeddedUI, "ui/dist")

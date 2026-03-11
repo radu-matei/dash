@@ -668,6 +668,20 @@ func templatesHandler() http.HandlerFunc {
 	}
 }
 
+// ── Version ───────────────────────────────────────────────────────────────────
+
+// versionHandler serves GET /api/version.
+// It returns the commit SHA that was injected at build time via ldflags.
+func versionHandler(commitSHA string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			jsonErr(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		jsonOK(w, map[string]string{"sha": commitSHA})
+	}
+}
+
 // ── Validation helpers ────────────────────────────────────────────────────────
 
 var (

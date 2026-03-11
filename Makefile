@@ -1,8 +1,8 @@
 .PHONY: ui build install clean test vet lint dev
 
 BINARY  := dashboard
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS := -ldflags "-s -w -X main.version=$(VERSION)"
+SHA     := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS := -ldflags "-s -w -X github.com/spinframework/dash/cmd.CommitSHA=$(SHA)-dev"
 
 # Build the React UI and copy the compiled assets into the Go embed path.
 ui:

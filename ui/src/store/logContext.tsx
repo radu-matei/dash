@@ -20,11 +20,13 @@ export function LogProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true
 
-    // Live stream only — no historical log loading
+    // Live stream only — stamp each line with the arrival time so the
+    // log viewer can show a timestamp even when the line has none.
     const es = subscribeToLogs(line => {
       if (!active) return
+      const stamped = { ...line, receivedAt: Date.now() }
       setRawLines(prev => {
-        const next = [...prev, line]
+        const next = [...prev, stamped]
         return next.length > MAX ? next.slice(-MAX) : next
       })
     })

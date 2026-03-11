@@ -128,6 +128,7 @@ func run(cmd *cobra.Command, args []string) error {
 		EnvOverrides:   envOverrides,
 		CliOverrides:   cliOverrides,
 		AllowMutations: allowEdits,
+		CommitSHA:      CommitSHA,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up server: %w", err)
