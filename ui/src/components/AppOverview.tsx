@@ -194,8 +194,17 @@ function PaneSection({
   )
 }
 
+/** Build a clickable URL from a Spin listen address and a route pattern.
+ *  Strips Spin's catch-all wildcard suffix (/...) before joining. */
+function routeUrl(listenAddr: string | null | undefined, route: string | null | undefined): string | null {
+  if (!listenAddr || !route) return null
+  // /api/... → /api/   /... → /   ... → /
+  const path = route.replace(/\/\.\.\.$/, '/').replace(/^\.\.\.$/, '/')
+  return listenAddr.replace(/\/$/, '') + path
+}
+
 function InfoRow({
-  Icon: RowIcon, main, sub, tag, tagColor = 'gray', onClick,
+  Icon: RowIcon, main, sub, tag, tagColor = 'gray', onClick, href,
 }: {
   Icon: React.FC<{ className?: string }>
   main: React.ReactNode
@@ -203,6 +212,8 @@ function InfoRow({
   tag?: string
   tagColor?: 'gray' | 'green' | 'purple' | 'blue' | 'red' | 'orange' | 'teal'
   onClick?: () => void
+  /** When provided, an external-link icon is rendered that opens this URL. */
+  href?: string | null
 }) {
   const tagCls = ({
     gray:   'bg-gray-100 text-gray-500',
@@ -223,6 +234,18 @@ function InfoRow({
       </div>
       {tag && (
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${tagCls}`}>{tag}</span>
+      )}
+      {href && (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={e => e.stopPropagation()}
+          className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+          title={`Open ${href}`}
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </a>
       )}
       {onClick && (
         <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0 -mr-0.5" />
@@ -291,7 +314,7 @@ function usePaneResize(
 // ─── Detail pane (component) ──────────────────────────────────────────────────
 
 function DetailPane({
-  component: c, onClose, onSelect, canMutate, paneWidth, onPaneWidthChange,
+  component: c, onClose, onSelect, canMutate, paneWidth, onPaneWidthChange, listenAddr,
 }: {
   component: ComponentInfo
   onClose: () => void
@@ -299,6 +322,7 @@ function DetailPane({
   canMutate: boolean
   paneWidth: number
   onPaneWidthChange: (w: number) => void
+  listenAddr?: string | null
 }) {
   const { refresh } = useAppStore()
   const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
@@ -383,11 +407,13 @@ function DetailPane({
                 )
               }
               const route = t.route ?? t.channel ?? t.address ?? '—'
+              const url = t.type === 'http' ? routeUrl(listenAddr, t.route) : null
               return (
                 <InfoRow key={i} Icon={meta.icon} main={route}
                   sub={`${meta.label} trigger`}
                   tag={meta.label.toUpperCase()}
                   tagColor={meta.color as 'green' | 'red' | 'orange' | 'teal' | 'purple' | 'blue' | 'gray'}
+                  href={url}
                   onClick={() => onSelect({ kind: 'trigger-group', triggerType: t.type })}
                 />
               )
@@ -1384,7 +1410,7 @@ function ResourcePane({
 // ─── Trigger pane ─────────────────────────────────────────────────────────────
 
 function TriggerPane({
-  triggerType, triggers, components, onClose, onSelect, paneWidth, onPaneWidthChange,
+  triggerType, triggers, components, onClose, onSelect, paneWidth, onPaneWidthChange, listenAddr,
 }: {
   triggerType: string
   triggers: TriggerInfo[]
@@ -1393,6 +1419,7 @@ function TriggerPane({
   onSelect: (s: Selection) => void
   paneWidth: number
   onPaneWidthChange: (w: number) => void
+  listenAddr?: string | null
 }) {
   const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
   const meta = getTriggerMeta(triggerType)
@@ -1434,6 +1461,7 @@ function TriggerPane({
         {triggers.map((t, i) => {
           const comp = components.find(c => c.id === t.component)
           const routeLabel = t.private ? null : (t.route ?? t.channel ?? t.address ?? null)
+          const routeHref = (!t.private && triggerType === 'http') ? routeUrl(listenAddr, t.route) : null
 
           return (
             <div key={i} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -1445,9 +1473,20 @@ function TriggerPane({
                     Private endpoint
                   </span>
                 ) : routeLabel ? (
-                  <code className="text-xs font-mono text-gray-800 font-semibold break-all">{routeLabel}</code>
+                  <code className="text-xs font-mono text-gray-800 font-semibold break-all flex-1">{routeLabel}</code>
                 ) : (
-                  <span className="text-xs text-gray-400 italic">No route</span>
+                  <span className="text-xs text-gray-400 italic flex-1">No route</span>
+                )}
+                {routeHref && (
+                  <a
+                    href={routeHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+                    title={`Open ${routeHref}`}
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
                 )}
               </div>
 
@@ -1709,6 +1748,7 @@ export default function AppOverview() {
             canMutate={canMutate}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
+            listenAddr={app?.listenAddr}
           />
         )}
 
@@ -1737,6 +1777,7 @@ export default function AppOverview() {
             onSelect={setSelected}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
+            listenAddr={app?.listenAddr}
           />
         )}
 
