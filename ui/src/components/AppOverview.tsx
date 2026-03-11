@@ -361,6 +361,18 @@ function bez(x1: number, y1: number, x2: number, y2: number) {
 
 interface Selection { kind: 'trigger' | 'component'; componentId: string; triggerIdx?: number }
 
+// Hover target can be any node type, not just those that open the detail pane.
+type ActiveTarget =
+  | { kind: 'trigger';   componentId: string; triggerIdx: number }
+  | { kind: 'component'; componentId: string }
+  | { kind: 'resource';  resKind: 'kv' | 'sqlite'; resName: string }
+  | { kind: 'variable';  varName: string }
+
+function selectionToActive(s: Selection): ActiveTarget {
+  if (s.kind === 'trigger') return { kind: 'trigger', componentId: s.componentId, triggerIdx: s.triggerIdx! }
+  return { kind: 'component', componentId: s.componentId }
+}
+
 function TopologyGraph({
   components, triggers, selected, onSelect,
 }: {
@@ -369,12 +381,13 @@ function TopologyGraph({
   selected: Selection | null
   onSelect: (s: Selection | null) => void
 }) {
+  const [hovered, setHovered] = useState<ActiveTarget | null>(null)
+
+  // Hovered takes priority; otherwise fall back to the pinned selection.
+  const active: ActiveTarget | null = hovered ?? (selected ? selectionToActive(selected) : null)
+
   // Sort triggers so they follow the component order — prevents all crossings.
-  // For each component in position order, emit its triggers in sequence.
-  const sortedTriggers = components.flatMap(c =>
-    triggers.filter(t => t.component === c.id)
-  )
-  // Any triggers whose component wasn't found go at the end.
+  const sortedTriggers = components.flatMap(c => triggers.filter(t => t.component === c.id))
   const knownComponentIds = new Set(components.map(c => c.id))
   sortedTriggers.push(...triggers.filter(t => !knownComponentIds.has(t.component)))
 
@@ -387,14 +400,12 @@ function TopologyGraph({
   ]
   const hasResources = resources.length > 0
 
-  // Variables — unique names referenced by any component (keys of component.variables)
-  // Service bindings will slot in here as another resource-like column in the future.
   const varNames = [...new Set(components.flatMap(c => Object.keys(c.variables ?? {})))]
   const hasVars  = varNames.length > 0
 
   // Canvas dimensions
-  const rightmostX  = hasVars ? VAR_X : hasResources ? RES_X : COMP_X
-  const rightmostW  = hasVars ? VAR_NODE_W : NODE_W
+  const rightmostX = hasVars ? VAR_X : hasResources ? RES_X : COMP_X
+  const rightmostW = hasVars ? VAR_NODE_W : NODE_W
   const svgW   = rightmostX + rightmostW + PADDING
   const innerH = Math.max(
     colH(sortedTriggers.length),
@@ -409,7 +420,6 @@ function TopologyGraph({
   const rOff = colOff(resources.length, totalH)
   const vOff = varColOff(varNames.length, totalH)
 
-  // Shared resource detection
   const sharedCount = (kind: string, name: string) =>
     components.filter(c =>
       kind === 'kv'
@@ -417,39 +427,114 @@ function TopologyGraph({
         : (c.sqliteDatabases ?? []).includes(name)
     ).length
 
-  // Trigger → component edges
+  // ── Edge visibility helpers ───────────────────────────────────────────────
+
+  const triggerEdgeActive = (compId: string, ti: number): boolean => {
+    if (!active) return false
+    if (active.kind === 'trigger')   return active.componentId === compId && active.triggerIdx === ti
+    if (active.kind === 'component') return active.componentId === compId
+    return false
+  }
+
+  const resourceEdgeActive = (compId: string, resKind: 'kv' | 'sqlite', resName: string): boolean => {
+    if (!active) return false
+    if (active.kind === 'component') return active.componentId === compId
+    if (active.kind === 'trigger')   return active.componentId === compId
+    if (active.kind === 'resource')  return active.resKind === resKind && active.resName === resName
+    return false
+  }
+
+  const varEdgeActive = (compId: string, varName: string): boolean => {
+    if (!active) return false
+    if (active.kind === 'component') return active.componentId === compId
+    if (active.kind === 'trigger')   return active.componentId === compId
+    if (active.kind === 'variable')  return active.varName === varName
+    return false
+  }
+
+  // ── Node highlight helpers ────────────────────────────────────────────────
+  // Returns 'hi' (primary), 'sec' (secondary/related), 'lo' (dimmed), or 'normal'.
+
+  type NodeState = 'hi' | 'sec' | 'lo' | 'normal'
+
+  const triggerState = (compId: string, ti: number): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'trigger')   return active.componentId === compId && active.triggerIdx === ti ? 'hi' : 'lo'
+    if (active.kind === 'component') return active.componentId === compId ? 'sec' : 'lo'
+    if (active.kind === 'resource' || active.kind === 'variable') {
+      // Dim triggers of unrelated components
+      const relatedCompIds = active.kind === 'resource'
+        ? components.filter(c => (active.resKind === 'kv' ? c.keyValueStores : c.sqliteDatabases ?? [])?.includes(active.resName)).map(c => c.id)
+        : components.filter(c => Object.keys(c.variables ?? {}).includes(active.varName)).map(c => c.id)
+      return relatedCompIds.includes(compId) ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  const compState = (compId: string): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'component') return active.componentId === compId ? 'hi' : 'lo'
+    if (active.kind === 'trigger')   return active.componentId === compId ? 'sec' : 'lo'
+    if (active.kind === 'resource') {
+      const comp = components.find(c => c.id === compId)
+      const uses = active.resKind === 'kv'
+        ? (comp?.keyValueStores ?? []).includes(active.resName)
+        : (comp?.sqliteDatabases ?? []).includes(active.resName)
+      return uses ? 'sec' : 'lo'
+    }
+    if (active.kind === 'variable') {
+      const comp = components.find(c => c.id === compId)
+      return Object.keys(comp?.variables ?? {}).includes(active.varName) ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  const resourceState = (resKind: 'kv' | 'sqlite', resName: string): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'resource') return active.resKind === resKind && active.resName === resName ? 'hi' : 'lo'
+    if (active.kind === 'component' || active.kind === 'trigger') {
+      const compId = active.componentId
+      const comp = components.find(c => c.id === compId)
+      const uses = resKind === 'kv'
+        ? (comp?.keyValueStores ?? []).includes(resName)
+        : (comp?.sqliteDatabases ?? []).includes(resName)
+      return uses ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  const varState = (varName: string): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'variable') return active.varName === varName ? 'hi' : 'lo'
+    if (active.kind === 'component' || active.kind === 'trigger') {
+      const compId = active.componentId
+      const comp = components.find(c => c.id === compId)
+      return Object.keys(comp?.variables ?? {}).includes(varName) ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  // ── Precompute edges ──────────────────────────────────────────────────────
+
   const triggerEdges = sortedTriggers.map((t, ti) => {
     const ci = components.findIndex(c => c.id === t.component)
     if (ci < 0) return null
-    const isSelected =
-      selected?.kind === 'trigger'
-        ? selected.componentId === t.component && selected.triggerIdx === ti
-        : selected?.kind === 'component'
-        ? selected.componentId === t.component
-        : false
+    const on = triggerEdgeActive(t.component, ti)
     return {
-      t, ti, ci,
+      t, ti, ci, on,
       x1: PADDING,          y1: nodeY(tOff, ti) + NODE_H / 2,
       x2: COMP_X + PADDING, y2: nodeY(cOff, ci) + NODE_H / 2,
-      selected: isSelected,
     }
-  }).filter(Boolean) as {
-    t: TriggerInfo; ti: number; ci: number
-    x1: number; y1: number; x2: number; y2: number; selected: boolean
-  }[]
+  }).filter(Boolean) as { t: TriggerInfo; ti: number; ci: number; on: boolean; x1: number; y1: number; x2: number; y2: number }[]
 
-  // Component → resource edges
-  const resourceEdges: {
-    x1: number; y1: number; x2: number; y2: number; shared: boolean; selectedComp: boolean
-  }[] = []
+  const resourceEdges: { x1: number; y1: number; x2: number; y2: number; shared: boolean; on: boolean }[] = []
   components.forEach((c, ci) => {
-    const compSelected = selected?.componentId === c.id
-    ;(c.keyValueStores  ?? []).forEach(kv => {
-      const ri = resources.findIndex(r => r.kind === 'kv'     && r.name === kv)
+    ;(c.keyValueStores ?? []).forEach(kv => {
+      const ri = resources.findIndex(r => r.kind === 'kv' && r.name === kv)
       if (ri >= 0) resourceEdges.push({
         x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
         x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
-        shared: sharedCount('kv', kv) > 1, selectedComp: compSelected,
+        shared: sharedCount('kv', kv) > 1, on: resourceEdgeActive(c.id, 'kv', kv),
       })
     })
     ;(c.sqliteDatabases ?? []).forEach(db => {
@@ -457,40 +542,26 @@ function TopologyGraph({
       if (ri >= 0) resourceEdges.push({
         x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
         x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
-        shared: sharedCount('sqlite', db) > 1, selectedComp: compSelected,
+        shared: sharedCount('sqlite', db) > 1, on: resourceEdgeActive(c.id, 'sqlite', db),
       })
     })
   })
 
-  // Component → variable edges
-  // Edges always originate from the component's right edge, sweeping past the
-  // resource column.  This makes the visual intent clear (variables are a
-  // component concern, not a resource concern) and gives the arcs room to breathe.
-  const varEdges: {
-    x1: number; y1: number; x2: number; y2: number; selectedComp: boolean
-  }[] = []
   const VAR_EDGE_X1 = COMP_X + PADDING + NODE_W
+  const varEdges: { x1: number; y1: number; x2: number; y2: number; on: boolean }[] = []
   components.forEach((c, ci) => {
-    const compSelected = selected?.componentId === c.id
     Object.keys(c.variables ?? {}).forEach(varName => {
       const vi = varNames.indexOf(varName)
       if (vi < 0) return
       varEdges.push({
-        x1: VAR_EDGE_X1,       y1: nodeY(cOff, ci)    + NODE_H     / 2,
-        x2: VAR_X + PADDING,   y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
-        selectedComp: compSelected,
+        x1: VAR_EDGE_X1,     y1: nodeY(cOff, ci)    + NODE_H     / 2,
+        x2: VAR_X + PADDING, y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
+        on: varEdgeActive(c.id, varName),
       })
     })
   })
 
-  const isTriggerHighlighted = (ti: number, compId: string) => {
-    if (!selected) return false
-    if (selected.kind === 'trigger') return selected.componentId === compId && selected.triggerIdx === ti
-    if (selected.kind === 'component') return selected.componentId === compId
-    return false
-  }
-  const isCompHighlighted = (compId: string) =>
-    selected !== null && selected.componentId === compId
+  const anyActive = active !== null
 
   return (
     <div className="overflow-x-auto">
@@ -503,20 +574,19 @@ function TopologyGraph({
       </div>
 
       <div className="relative" style={{ width: svgW, height: totalH }}>
-        {/* SVG edges */}
+        {/* SVG edges — hidden by default, revealed on hover / selection */}
         <svg className="absolute inset-0 pointer-events-none" width={svgW} height={totalH}>
           {triggerEdges.map((e, i) => (
-            <g key={`te-${i}`}>
-              <path d={bez(e.x1 + NODE_W, e.y1, e.x2, e.y2)}
+            <g key={`te-${i}`} style={{ transition: 'opacity 0.15s' }} opacity={!anyActive ? 0 : e.on ? 1 : 0}>
+              <path
+                d={bez(e.x1 + NODE_W, e.y1, e.x2, e.y2)}
                 fill="none"
-                stroke={e.selected ? '#10b981' : '#d1fae5'}
-                strokeWidth={e.selected ? 2 : 1.5}
-                strokeOpacity={e.selected ? 1 : 0.7}
+                stroke="#10b981"
+                strokeWidth={2}
               />
               <polygon
                 points={`${e.x2},${e.y2} ${e.x2 - 7},${e.y2 - 4} ${e.x2 - 7},${e.y2 + 4}`}
-                fill={e.selected ? '#10b981' : '#d1fae5'}
-                fillOpacity={e.selected ? 1 : 0.7}
+                fill="#10b981"
               />
             </g>
           ))}
@@ -524,43 +594,55 @@ function TopologyGraph({
             <path key={`re-${i}`}
               d={bez(e.x1, e.y1, e.x2, e.y2)}
               fill="none"
-              stroke={e.selectedComp ? (e.shared ? '#8b5cf6' : '#6b7280') : (e.shared ? '#ddd6fe' : '#e5e7eb')}
-              strokeWidth={e.selectedComp ? 1.5 : 1}
+              stroke={e.shared ? '#8b5cf6' : '#6b7280'}
+              strokeWidth={1.5}
               strokeDasharray={e.shared ? '5 3' : undefined}
-              strokeOpacity={e.selectedComp ? 0.8 : 0.6}
+              style={{ transition: 'opacity 0.15s' }}
+              opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
             />
           ))}
           {hasVars && varEdges.map((e, i) => (
             <path key={`ve-${i}`}
               d={bezBiased(e.x1, e.y1, e.x2, e.y2, 0.35)}
               fill="none"
-              stroke={e.selectedComp ? '#d97706' : '#fed7aa'}
-              strokeWidth={e.selectedComp ? 1.5 : 1}
+              stroke="#d97706"
+              strokeWidth={1.5}
               strokeDasharray="5 3"
-              strokeOpacity={e.selectedComp ? 0.9 : 0.7}
+              style={{ transition: 'opacity 0.15s' }}
+              opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
             />
           ))}
         </svg>
 
         {/* Trigger nodes */}
         {sortedTriggers.map((t, ti) => {
-          const Icon = TRIGGER_ICONS[t.type] ?? Zap
-          const highlighted = isTriggerHighlighted(ti, t.component)
+          const TIcon = TRIGGER_ICONS[t.type] ?? Zap
+          const state = triggerState(t.component, ti)
           const route = t.route ?? t.channel ?? ''
           return (
             <div key={`t-${ti}`}
               className={`absolute flex items-center rounded-xl overflow-hidden cursor-pointer transition-all ${
-                highlighted
+                state === 'hi'
                   ? 'bg-green-50 border-2 border-green-400 shadow-md shadow-green-100'
+                  : state === 'sec'
+                  ? 'bg-green-50/60 border border-green-300 shadow-sm'
                   : 'bg-white border border-gray-200 shadow-sm hover:border-green-300 hover:shadow'
               }`}
-              style={{ left: PADDING, top: nodeY(tOff, ti), width: NODE_W, height: NODE_H }}
+              style={{
+                left: PADDING, top: nodeY(tOff, ti), width: NODE_W, height: NODE_H,
+                opacity: state === 'lo' ? 0.35 : 1,
+                transition: 'opacity 0.15s, box-shadow 0.15s',
+              }}
               onClick={() => onSelect(
-                highlighted ? null : { kind: 'trigger', componentId: t.component, triggerIdx: ti }
+                selected?.kind === 'trigger' && selected.componentId === t.component && selected.triggerIdx === ti
+                  ? null
+                  : { kind: 'trigger', componentId: t.component, triggerIdx: ti }
               )}
+              onMouseEnter={() => setHovered({ kind: 'trigger', componentId: t.component, triggerIdx: ti })}
+              onMouseLeave={() => setHovered(null)}
             >
-              <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${highlighted ? 'bg-green-100 border-green-200' : 'bg-green-50 border-green-100'}`}>
-                <Icon className="w-4 h-4 text-green-600" />
+              <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${state === 'hi' ? 'bg-green-100 border-green-200' : 'bg-green-50 border-green-100'}`}>
+                <TIcon className="w-4 h-4 text-green-600" />
               </div>
               <div className="px-3 min-w-0">
                 <div className="text-xs font-bold text-green-700 uppercase tracking-wide">{t.type}</div>
@@ -572,23 +654,31 @@ function TopologyGraph({
 
         {/* Component nodes */}
         {components.map((c, ci) => {
-          const highlighted = isCompHighlighted(c.id)
-          const src = c.source?.split('/').pop() ?? c.source ?? ''
-          const lang = detectLang(c)
+          const state = compState(c.id)
+          const src   = c.source?.split('/').pop() ?? c.source ?? ''
+          const lang  = detectLang(c)
           return (
             <div key={`c-${ci}`}
               className={`absolute flex items-center rounded-xl overflow-hidden cursor-pointer transition-all ${
-                highlighted
+                state === 'hi'
                   ? 'border-2 border-spin-seagreen shadow-lg shadow-blue-200 scale-[1.02]'
+                  : state === 'sec'
+                  ? 'border border-spin-seagreen/60 shadow-md'
                   : 'shadow-md hover:shadow-lg hover:scale-[1.01]'
               }`}
               style={{
                 left: COMP_X + PADDING, top: nodeY(cOff, ci), width: NODE_W, height: NODE_H,
-                background: highlighted ? '#1e3a5f' : '#0f2744',
+                background: state === 'hi' ? '#1e3a5f' : '#0f2744',
+                opacity: state === 'lo' ? 0.35 : 1,
+                transition: 'opacity 0.15s, box-shadow 0.15s, transform 0.15s',
               }}
               onClick={() => onSelect(
-                highlighted ? null : { kind: 'component', componentId: c.id }
+                selected?.kind === 'component' && selected.componentId === c.id
+                  ? null
+                  : { kind: 'component', componentId: c.id }
               )}
+              onMouseEnter={() => setHovered({ kind: 'component', componentId: c.id })}
+              onMouseLeave={() => setHovered(null)}
             >
               <div className="w-10 h-full bg-black/25 flex items-center justify-center shrink-0">
                 <Icon
@@ -610,11 +700,24 @@ function TopologyGraph({
         {/* Resource nodes */}
         {hasResources && resources.map((r, ri) => {
           const isKV  = r.kind === 'kv'
-          const shared = sharedCount(r.kind, r.name) > 1
+          const state = resourceState(r.kind, r.name)
+          const usedBy = sharedCount(r.kind, r.name)
           return (
             <div key={`r-${ri}`}
-              className={`absolute flex items-center bg-white rounded-xl shadow-sm overflow-hidden border ${isKV ? 'border-purple-200' : 'border-blue-200'}`}
-              style={{ left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H }}
+              className={`absolute flex items-center bg-white rounded-xl shadow-sm overflow-hidden border cursor-pointer transition-all ${
+                state === 'hi'
+                  ? (isKV ? 'border-purple-400 shadow-purple-100 shadow-md' : 'border-blue-400 shadow-blue-100 shadow-md')
+                  : state === 'sec'
+                  ? (isKV ? 'border-purple-300' : 'border-blue-300')
+                  : (isKV ? 'border-purple-200 hover:border-purple-300' : 'border-blue-200 hover:border-blue-300')
+              }`}
+              style={{
+                left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                opacity: state === 'lo' ? 0.35 : 1,
+                transition: 'opacity 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={() => setHovered({ kind: 'resource', resKind: r.kind, resName: r.name })}
+              onMouseLeave={() => setHovered(null)}
             >
               <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${isKV ? 'bg-purple-50 border-purple-100' : 'bg-blue-50 border-blue-100'}`}>
                 {isKV ? <Key className="w-4 h-4 text-purple-500" /> : <Database className="w-4 h-4 text-blue-500" />}
@@ -622,31 +725,41 @@ function TopologyGraph({
               <div className="px-3 min-w-0 flex-1">
                 <div className="text-xs font-bold text-gray-800 truncate">{r.name}</div>
                 <div className={`text-xs ${isKV ? 'text-purple-400' : 'text-blue-400'}`}>
-                  {isKV ? 'Key-Value' : 'SQLite'}{shared && <span className="ml-1.5 text-gray-400">· shared</span>}
+                  {isKV ? 'Key-Value' : 'SQLite'}
+                  {usedBy > 1 && <span className="ml-1.5 text-gray-400">· {usedBy} components</span>}
                 </div>
               </div>
             </div>
           )
         })}
 
-        {/* Variable nodes — compact height to keep the canvas proportional */}
+        {/* Variable nodes */}
         {hasVars && varNames.map((varName, vi) => {
           const usedBy = components.filter(c => Object.keys(c.variables ?? {}).includes(varName))
-          const shared = usedBy.length > 1
-          const compSelected = usedBy.some(c => selected?.componentId === c.id)
+          const state = varState(varName)
           return (
             <div key={`v-${vi}`}
-              className={`absolute flex items-center bg-white rounded-lg shadow-sm overflow-hidden border transition-all ${
-                compSelected ? 'border-amber-400 shadow-amber-100' : 'border-amber-200'
+              className={`absolute flex items-center bg-white rounded-lg shadow-sm overflow-hidden border cursor-pointer transition-all ${
+                state === 'hi'
+                  ? 'border-amber-400 shadow-amber-100 shadow-md'
+                  : state === 'sec'
+                  ? 'border-amber-300'
+                  : 'border-amber-200 hover:border-amber-300'
               }`}
-              style={{ left: VAR_X + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H }}
+              style={{
+                left: VAR_X + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H,
+                opacity: state === 'lo' ? 0.35 : 1,
+                transition: 'opacity 0.15s, box-shadow 0.15s',
+              }}
+              onMouseEnter={() => setHovered({ kind: 'variable', varName })}
+              onMouseLeave={() => setHovered(null)}
             >
-              <div className={`w-8 h-full flex items-center justify-center shrink-0 border-r ${compSelected ? 'bg-amber-100 border-amber-200' : 'bg-amber-50 border-amber-100'}`}>
+              <div className={`w-8 h-full flex items-center justify-center shrink-0 border-r ${state === 'hi' ? 'bg-amber-100 border-amber-200' : 'bg-amber-50 border-amber-100'}`}>
                 <Layers className="w-3.5 h-3.5 text-amber-500" />
               </div>
               <div className="px-2.5 min-w-0 flex-1">
                 <div className="text-xs font-semibold text-gray-800 font-mono truncate">{varName}</div>
-                {shared && <div className="text-[10px] text-amber-400 leading-tight">shared</div>}
+                {usedBy.length > 1 && <div className="text-[10px] text-amber-400 leading-tight">{usedBy.length} components</div>}
               </div>
             </div>
           )
@@ -660,7 +773,7 @@ function TopologyGraph({
           Trigger route
         </div>
         <div className="flex items-center gap-1.5">
-          <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#94a3b8" strokeWidth="1.5" /></svg>
+          <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#6b7280" strokeWidth="1.5" /></svg>
           Resource access
         </div>
         <div className="flex items-center gap-1.5">
@@ -669,12 +782,12 @@ function TopologyGraph({
         </div>
         {hasVars && (
           <div className="flex items-center gap-1.5">
-            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#d97706" strokeWidth="1.5" /></svg>
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#d97706" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
             Variable binding
           </div>
         )}
         <div className="flex items-center gap-1.5 text-gray-300">
-          · Click any node to inspect
+          · Hover any node to trace connections
         </div>
       </div>
     </div>
