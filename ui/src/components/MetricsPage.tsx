@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AreaChart, Area, BarChart, Bar, CartesianGrid, Cell,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  Activity, AlertCircle, BarChart2, Clock, RefreshCw, Zap,
+  Activity, AlertCircle, ArrowRight, BarChart2, Clock, RefreshCw, Zap,
 } from 'lucide-react'
 import {
   getTraces, getOtelMetrics,
@@ -29,20 +30,71 @@ function fmtTime(iso: string): string {
   } catch { return '' }
 }
 
+// ─── Unit-aware metric formatters ─────────────────────────────────────────────
+
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`
+}
+
+function fmtSecs(s: number): string {
+  if (s === 0) return '0ms'
+  if (s < 0.001) return `${(s * 1_000_000).toFixed(0)}μs`
+  if (s < 1) return `${(s * 1000).toFixed(2)}ms`
+  return `${s.toFixed(3)}s`
+}
+
+// Returns the unit string for a series: first checks the OTel instrument unit,
+// then falls back to the 'unit' attribute Spin injects on each data point.
+function inferUnit(series: MetricSeries): string {
+  if (series.unit) return series.unit
+  for (const pt of series.points) {
+    const u = pt.attrs?.['unit']
+    if (u) return u
+  }
+  return ''
+}
+
+function fmtMetricValue(value: number, unit: string): string {
+  switch (unit) {
+    case 'By': return fmtBytes(value)
+    case 's':  return fmtSecs(value)
+    case 'ms': return `${value.toFixed(1)}ms`
+    default:   return value % 1 === 0 ? String(Math.round(value)) : value.toFixed(3)
+  }
+}
+
+function yAxisTickFormatter(unit: string): (v: number) => string {
+  return (v: number) => fmtMetricValue(v, unit)
+}
+
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
 function StatCard({
-  label, value, sub, Icon, accent = false, warn = false,
-}: { label: string; value: string; sub?: string; Icon: typeof Activity; accent?: boolean; warn?: boolean }) {
+  label, value, sub, Icon, accent = false, warn = false, onClick, linkLabel,
+}: {
+  label: string; value: string; sub?: string; Icon: typeof Activity
+  accent?: boolean; warn?: boolean; onClick?: () => void; linkLabel?: string
+}) {
   return (
-    <div className={`card p-5 flex items-start gap-4 ${accent ? 'border-spin-seagreen/40' : warn ? 'border-amber-300' : ''}`}>
+    <div
+      className={`card p-5 flex items-start gap-4 ${accent ? 'border-spin-seagreen/40' : warn ? 'border-amber-300' : ''} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      onClick={onClick}
+    >
       <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : warn ? 'bg-amber-50' : 'bg-gray-100'}`}>
         <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : warn ? 'text-amber-600' : 'text-gray-500'}`} />
       </div>
-      <div>
+      <div className="min-w-0">
         <p className="text-2xl font-bold text-gray-900 leading-none">{value}</p>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
         <p className="text-xs text-gray-500 mt-1">{label}</p>
+        {onClick && linkLabel && (
+          <p className="text-xs text-amber-600 font-medium mt-1 flex items-center gap-0.5">
+            {linkLabel} <ArrowRight className="w-3 h-3" />
+          </p>
+        )}
       </div>
     </div>
   )
@@ -68,6 +120,9 @@ function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; titl
 
 const TT = { contentStyle: { fontSize: 11, borderRadius: 8, border: '1px solid #e5e7eb' }, labelStyle: { fontWeight: 600 } }
 
+// Consistent color palette shared across component pills, chart lines, and bars
+const COMP_PALETTE = ['#7c3aed', '#0284c7', '#059669', '#d97706', '#db2777', '#0891b2', '#65a30d', '#ea580c']
+
 // ─── OTel metrics section ─────────────────────────────────────────────────────
 
 function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
@@ -90,66 +145,193 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
 }
 
 function MetricCard({ series }: { series: MetricSeries }) {
-  const pts = series.points.slice(-60)
+  const unit = inferUnit(series)
 
-  // Group by component attr to show breakdown
-  const byComponent = new Map<string, number>()
-  for (const pt of series.points) {
-    const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? 'total'
-    byComponent.set(comp, (byComponent.get(comp) ?? 0) + pt.value)
-  }
-  const compData = Array.from(byComponent.entries())
-    .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
-    .sort((a, b) => b.value - a.value)
+  // All unique component IDs present in this series' data points, sorted
+  const allComponents = useMemo(() => {
+    const set = new Set<string>()
+    for (const pt of series.points) {
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
+      if (comp) set.add(comp)
+    }
+    return Array.from(set).sort()
+  }, [series.points])
 
-  const chartData = pts.map(p => ({ time: fmtTime(p.timestamp), value: p.value }))
+  // Which components are currently toggled on — all by default.
+  // Auto-add newly-seen components (e.g. after a data refresh).
+  const [activeComps, setActiveComps] = useState<Set<string>>(() => new Set(allComponents))
+  useEffect(() => {
+    setActiveComps(prev => {
+      const missing = allComponents.filter(c => !prev.has(c))
+      if (!missing.length) return prev
+      const next = new Set(prev)
+      missing.forEach(c => next.add(c))
+      return next
+    })
+  }, [allComponents])
 
+  const toggleComp = (c: string) =>
+    setActiveComps(prev => {
+      const next = new Set(prev)
+      // Keep at least one active so the chart is never empty
+      if (next.has(c) && next.size > 1) next.delete(c)
+      else next.add(c)
+      return next
+    })
+
+  const hasComponents = allComponents.length > 0
+
+  // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
+  // All components in a single PeriodicReader export share the same timestamp
+  // (within a second), so fmtTime produces a stable key.
+  const chartData = useMemo(() => {
+    const pts = series.points.slice(-300)
+    const timeMap = new Map<string, Record<string, number | string>>()
+    for (const pt of pts) {
+      const time = fmtTime(pt.timestamp)
+      if (!timeMap.has(time)) timeMap.set(time, { time })
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
+      // Use comp as the key when present; fall back to '_v' for component-less series
+      timeMap.get(time)![comp ?? '_v'] = pt.value
+    }
+    return Array.from(timeMap.values())
+  }, [series.points])
+
+  // Summary bars: for counters accumulate all points; for histograms keep latest
+  const compSummary = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const pt of series.points) {
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
+      if (series.kind === 'counter') m.set(comp, (m.get(comp) ?? 0) + pt.value)
+      else m.set(comp, pt.value)
+    }
+    return Array.from(m.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+  }, [series.points, series.kind])
+
+  const activeList = allComponents.filter(c => activeComps.has(c))
   const kindBadge = series.kind === 'counter' ? 'badge-blue' : series.kind === 'histogram' ? 'badge-purple' : 'badge-gray'
-  const unitSuffix = series.unit === 'ms' ? 'ms' : series.unit === 's' ? 's' : ''
+  const gradBase = `grad-${series.name.replace(/\./g, '-')}`
 
   return (
     <div className="card p-5">
-      <div className="flex items-start justify-between mb-3">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-2">
         <div>
           <p className="text-sm font-semibold text-gray-900 font-mono">{series.name}</p>
           {series.description && <p className="text-xs text-gray-400 mt-0.5">{series.description}</p>}
+          {unit && <p className="text-xs text-gray-400 font-mono mt-0.5">unit: {unit === 'By' ? 'bytes' : unit === 's' ? 'seconds' : unit}</p>}
         </div>
         <span className={`badge ${kindBadge} ml-2 shrink-0`}>{series.kind}</span>
       </div>
 
-      {/* Timeline chart */}
+      {/* Component toggle pills */}
+      {hasComponents && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {allComponents.map((c, i) => {
+            const color = COMP_PALETTE[i % COMP_PALETTE.length]
+            const active = activeComps.has(c)
+            return (
+              <button
+                key={c}
+                onClick={() => toggleComp(c)}
+                title={active ? `Hide ${c}` : `Show ${c}`}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono border transition-all"
+                style={{
+                  borderColor: color,
+                  color: active ? color : '#9ca3af',
+                  backgroundColor: active ? `${color}15` : 'transparent',
+                  opacity: active ? 1 : 0.45,
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: active ? color : '#9ca3af' }} />
+                {c}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Timeline chart — one Area per active component */}
       {chartData.length > 1 && (
         <ResponsiveContainer width="100%" height={100}>
-          <AreaChart data={chartData} margin={{ top: 2, right: 2, left: -30, bottom: 0 }}>
+          <AreaChart data={chartData} margin={{ top: 2, right: 4, left: 2, bottom: 0 }}>
             <defs>
-              <linearGradient id={`grad-${series.name}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.15} />
-                <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
-              </linearGradient>
+              {hasComponents
+                ? allComponents.map((c, i) => {
+                    const color = COMP_PALETTE[i % COMP_PALETTE.length]
+                    return (
+                      <linearGradient key={c} id={`${gradBase}-${i}`} x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={color} stopOpacity={0.2} />
+                        <stop offset="95%" stopColor={color} stopOpacity={0} />
+                      </linearGradient>
+                    )
+                  })
+                : (
+                  <linearGradient id={gradBase} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                  </linearGradient>
+                )
+              }
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="time" tick={{ fontSize: 8, fill: '#9ca3af' }} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 8, fill: '#9ca3af' }} />
-            <Tooltip {...TT} formatter={(v: number) => [`${v.toFixed(2)}${unitSuffix}`, series.name]} />
-            <Area type="monotone" dataKey="value" stroke="#7c3aed" fill={`url(#grad-${series.name})`} strokeWidth={1.5} dot={false} />
+            <YAxis
+              tick={{ fontSize: 8, fill: '#9ca3af' }}
+              tickFormatter={yAxisTickFormatter(unit)}
+              width={unit === 'By' ? 52 : 40}
+            />
+            <Tooltip
+              {...TT}
+              formatter={(v: number, name: string) => [fmtMetricValue(v, unit), name === '_v' ? series.name : name]}
+            />
+            {hasComponents
+              ? activeList.map(c => {
+                  const i = allComponents.indexOf(c)
+                  const color = COMP_PALETTE[i % COMP_PALETTE.length]
+                  return (
+                    <Area
+                      key={c}
+                      type="monotone"
+                      dataKey={c}
+                      name={c}
+                      stroke={color}
+                      fill={`url(#${gradBase}-${i})`}
+                      strokeWidth={1.5}
+                      dot={false}
+                      connectNulls
+                    />
+                  )
+                })
+              : <Area type="monotone" dataKey="_v" name={series.name} stroke="#7c3aed" fill={`url(#${gradBase})`} strokeWidth={1.5} dot={false} />
+            }
           </AreaChart>
         </ResponsiveContainer>
       )}
 
-      {/* Per-component breakdown */}
-      {compData.length > 1 && (
+      {/* Per-component summary bars */}
+      {compSummary.length >= 1 && (
         <div className="mt-3 border-t border-gray-100 pt-3">
           <p className="text-xs font-semibold text-gray-500 mb-2">By component</p>
           <div className="space-y-1.5">
-            {compData.map(c => {
-              const maxVal = compData[0].value
+            {compSummary.map(c => {
+              const maxVal = compSummary[0].value
+              const i = allComponents.indexOf(c.name)
+              const color = i >= 0 ? COMP_PALETTE[i % COMP_PALETTE.length] : '#7c3aed'
               return (
                 <div key={c.name} className="flex items-center gap-2 text-xs">
-                  <span className="w-28 truncate text-gray-600 font-mono" title={c.name}>{c.name}</span>
+                  <span className="w-28 truncate text-gray-600 font-mono" title={c.name}>
+                    {c.name === '_total' ? 'total' : c.name}
+                  </span>
                   <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-violet-500 rounded-full" style={{ width: `${maxVal > 0 ? (c.value / maxVal) * 100 : 0}%` }} />
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${maxVal > 0 ? (c.value / maxVal) * 100 : 0}%`, backgroundColor: color }}
+                    />
                   </div>
-                  <span className="w-16 text-right tabular-nums text-gray-700 font-mono">{c.value.toFixed(2)}{unitSuffix}</span>
+                  <span className="w-20 text-right tabular-nums text-gray-700 font-mono">{fmtMetricValue(c.value, unit)}</span>
                 </div>
               )
             })}
@@ -163,6 +345,7 @@ function MetricCard({ series }: { series: MetricSeries }) {
 // ─── Trace-derived section ────────────────────────────────────────────────────
 
 function TraceSection({ spans }: { spans: Span[] }) {
+  const navigate = useNavigate()
   const data = useMemo(() => {
     if (!spans.length) return null
 
@@ -216,7 +399,15 @@ function TraceSection({ spans }: { spans: Span[] }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard label="Total requests" value={String(data.total)} Icon={Activity} accent />
-        <StatCard label="Error rate" value={`${data.total > 0 ? ((data.errors / data.total) * 100).toFixed(1) : 0}%`} sub={`${data.errors} errors`} Icon={AlertCircle} warn={data.errors > 0} />
+        <StatCard
+          label="Error rate"
+          value={`${data.total > 0 ? ((data.errors / data.total) * 100).toFixed(1) : 0}%`}
+          sub={`${data.errors} error${data.errors !== 1 ? 's' : ''}`}
+          Icon={AlertCircle}
+          warn={data.errors > 0}
+          onClick={data.errors > 0 ? () => navigate('/traces?errors=1') : undefined}
+          linkLabel={data.errors > 0 ? 'View in Traces' : undefined}
+        />
         <StatCard label="Avg latency" value={fmtDuration(data.avg)} sub={`p50 ${fmtDuration(data.p50)}`} Icon={Clock} />
         <StatCard label="p95 / p99" value={fmtDuration(data.p95)} sub={`p99 ${fmtDuration(data.p99)}`} Icon={Zap} />
       </div>

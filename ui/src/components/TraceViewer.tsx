@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertCircle, ChevronDown, ChevronRight,
   ExternalLink, RefreshCw, Search,
@@ -34,6 +34,8 @@ export interface TraceGroup {
   spanCount: number
   hasErrors: boolean
   spans: Span[]
+  httpMethod?: string
+  httpStatus?: string
 }
 
 function groupTraces(spans: Span[]): TraceGroup[] {
@@ -47,6 +49,7 @@ function groupTraces(spans: Span[]): TraceGroup[] {
     const startMs = new Date(sorted[0].startTime).getTime()
     const endMs = Math.max(...sorted.map(s => new Date(s.startTime).getTime() + s.durationMs))
     const durationMs = Math.max(endMs - startMs, root?.durationMs ?? 0)
+    const rootAttrs = root?.attrs ?? {}
     return {
       traceId, rootName: root?.name ?? traceId.slice(0, 8),
       component: root?.component ?? '',
@@ -54,6 +57,8 @@ function groupTraces(spans: Span[]): TraceGroup[] {
       spanCount: ss.length,
       hasErrors: ss.some(s => s.status === 'ERROR'),
       spans: sorted,
+      httpMethod: rootAttrs['http.method'] ?? rootAttrs['http.request.method'],
+      httpStatus: rootAttrs['http.response.status_code'] ?? rootAttrs['http.status_code'],
     }
   }).sort((a, b) => b.startMs - a.startMs)
 }
@@ -115,17 +120,24 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
   const attrs = span.attrs ?? {}
   const keyAttrs = KEY_ATTRS.filter(k => attrs[k])
   const otherAttrs = Object.entries(attrs).filter(([k]) => !KEY_ATTRS.includes(k))
+  const httpStatus = attrs['http.response.status_code'] ?? attrs['http.status_code']
+  const isStatusError = httpStatus && Number(httpStatus) >= 400
 
   return (
-    <div className="border-t border-gray-200 bg-white text-xs flex flex-col">
+    <div className="border-t border-gray-200 bg-white text-xs flex flex-col max-h-72 overflow-y-auto">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200 shrink-0">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+        <div className="flex items-center gap-2 min-w-0">
           <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: isError ? '#dc2626' : color }} />
-          <span className="font-semibold text-gray-900 font-mono">{span.name}</span>
-          {isError && <span className="badge badge-red">ERROR</span>}
+          <span className="font-semibold text-gray-900 font-mono truncate">{span.name}</span>
+          {isError && <span className="badge badge-red shrink-0">ERROR</span>}
+          {httpStatus && (
+            <span className={`badge shrink-0 font-mono ${isStatusError ? 'badge-red' : 'badge-gray'}`}>
+              HTTP {httpStatus}
+            </span>
+          )}
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none">✕</button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* Summary row */}
@@ -133,41 +145,40 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
         <span>Start: <strong className="text-gray-900">{fmtTime(new Date(span.startTime).getTime())}</strong></span>
         <span>Duration: <strong className="text-gray-900">{fmtDuration(span.durationMs)}</strong></span>
         {span.component && <span>Component: <strong className="text-gray-900">{span.component}</strong></span>}
-        <span className="font-mono text-gray-400 text-xs">span: {span.spanId}</span>
-        {span.parentId && <span className="font-mono text-gray-400 text-xs">parent: {span.parentId}</span>}
+        <span className="font-mono text-gray-400">span: {span.spanId.slice(0, 16)}…</span>
+        {span.parentId && <span className="font-mono text-gray-400">parent: {span.parentId.slice(0, 16)}…</span>}
       </div>
 
       {/* Key attrs */}
       {keyAttrs.length > 0 && (
-        <div className="px-4 py-2 border-b border-gray-100 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+        <div className="px-4 py-2 border-b border-gray-100 grid grid-cols-[minmax(160px,auto)_1fr] gap-x-4 gap-y-1">
           {keyAttrs.map(k => (
             <>
               <span key={k + 'k'} className="text-gray-500 font-mono whitespace-nowrap">{k}</span>
-              <span key={k + 'v'} className={`font-mono break-all ${k === 'http.status_code' && Number(attrs[k]) >= 400 ? 'text-red-700 font-semibold' : 'text-gray-800'}`}>{attrs[k]}</span>
+              <span key={k + 'v'} className={`font-mono break-all ${
+                (k === 'http.status_code' || k === 'http.response.status_code') && Number(attrs[k]) >= 400
+                  ? 'text-red-700 font-semibold'
+                  : 'text-gray-800'
+              }`}>{attrs[k]}</span>
             </>
           ))}
         </div>
       )}
 
-      {/* All other attrs (collapsible) */}
+      {/* All other attrs — shown by default, no collapsible */}
       {otherAttrs.length > 0 && (
-        <details className="px-4 py-2">
-          <summary className="cursor-pointer text-gray-500 hover:text-gray-700 font-medium select-none">
-            {otherAttrs.length} more attribute{otherAttrs.length !== 1 ? 's' : ''}
-          </summary>
-          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 mt-2">
-            {otherAttrs.map(([k, v]) => (
-              <>
-                <span key={k + 'k'} className="text-gray-400 font-mono whitespace-nowrap">{k}</span>
-                <span key={k + 'v'} className="font-mono break-all text-gray-700">{v}</span>
-              </>
-            ))}
-          </div>
-        </details>
+        <div className="px-4 py-2 grid grid-cols-[minmax(160px,auto)_1fr] gap-x-4 gap-y-1">
+          {otherAttrs.map(([k, v]) => (
+            <>
+              <span key={k + 'k'} className="text-gray-400 font-mono whitespace-nowrap">{k}</span>
+              <span key={k + 'v'} className="font-mono break-all text-gray-700">{v}</span>
+            </>
+          ))}
+        </div>
       )}
 
       {Object.keys(attrs).length === 0 && (
-        <p className="px-4 py-2 text-gray-400 italic">No attributes recorded for this span.</p>
+        <p className="px-4 py-3 text-gray-400 italic">No attributes recorded for this span.</p>
       )}
     </div>
   )
@@ -364,11 +375,12 @@ function DurationBar({ durationMs, maxDurationMs }: { durationMs: number; maxDur
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function TraceViewer() {
+  const [searchParams] = useSearchParams()
   const [allSpans, setAllSpans]   = useState<Span[]>([])
   const [error, setError]         = useState<string | null>(null)
   const [selected, setSelected]   = useState<string | null>(null)
   const [filter, setFilter]       = useState('')
-  const [errorsOnly, setErrorsOnly] = useState(false)
+  const [errorsOnly, setErrorsOnly] = useState(() => searchParams.get('errors') === '1')
   const [activeTab, setActiveTab] = useState<'waterfall' | 'logs'>('waterfall')
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const navigate = useNavigate()
@@ -523,10 +535,20 @@ export default function TraceViewer() {
                   >
                     <td className="px-4 py-2.5 font-mono text-gray-500 tabular-nums">{fmtTime(t.startMs)}</td>
                     <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         {t.hasErrors && <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                        {t.httpMethod && (
+                          <span className="badge badge-gray font-mono text-xs px-1.5 py-0.5">{t.httpMethod}</span>
+                        )}
                         <span className="font-semibold text-gray-900">{t.rootName}</span>
                         {t.component && <span className="text-gray-400">— {t.component}</span>}
+                        {t.httpStatus && (
+                          <span className={`badge text-xs px-1.5 py-0.5 font-mono ${
+                            Number(t.httpStatus) >= 500 ? 'badge-red' :
+                            Number(t.httpStatus) >= 400 ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                            'badge-gray'
+                          }`}>{t.httpStatus}</span>
+                        )}
                       </div>
                     </td>
                     <td className="px-4 py-2.5"><SpanDots trace={t} colorMap={colorMap} /></td>
