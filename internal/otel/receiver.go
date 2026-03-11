@@ -171,12 +171,22 @@ func resourceSpansToSpans(rs *tracepb.ResourceSpans) []Span {
 				parentID = ""
 			}
 
+			// Prefer span-level component_id (set by Spin per-span) over the
+			// resource-level service.name, which is the same for every span in
+			// the batch and often reflects only one component or the app name.
+			spanComponent := component
+			if c := attrs["component_id"]; c != "" {
+				spanComponent = c
+			} else if c := attrs["component"]; c != "" {
+				spanComponent = c
+			}
+
 			spans = append(spans, Span{
 				TraceID:   hex.EncodeToString(s.TraceId),
 				SpanID:    hex.EncodeToString(s.SpanId),
 				ParentID:  parentID,
 				Name:      s.Name,
-				Component: component,
+				Component: spanComponent,
 				StartTime: time.Unix(0, int64(s.StartTimeUnixNano)),
 				Duration:  durationMs,
 				Status:    status,
@@ -289,12 +299,19 @@ func parseOTLPJSON(data []byte) ([]Span, error) {
 			if status == "OK" {
 				status = inferHTTPStatus(attrs)
 			}
+				// Prefer span-level component_id over resource service.name.
+				spanComponent := component
+				if c := attrs["component_id"]; c != "" {
+					spanComponent = c
+				} else if c := attrs["component"]; c != "" {
+					spanComponent = c
+				}
 				spans = append(spans, Span{
 					TraceID:   s.TraceID,
 					SpanID:    s.SpanID,
 					ParentID:  s.ParentSpanID,
 					Name:      s.Name,
-					Component: component,
+					Component: spanComponent,
 					StartTime: time.Unix(0, startNs),
 					Duration:  durationMs,
 					Status:    status,

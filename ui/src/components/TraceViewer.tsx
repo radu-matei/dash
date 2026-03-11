@@ -4,7 +4,7 @@ import {
   Activity, AlertCircle, ChevronDown, ChevronRight,
   ExternalLink, RefreshCw, Search,
 } from 'lucide-react'
-import { getTraces, type Span } from '../api/client'
+import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
 import { useLogStore } from '../store/logContext'
 import { parseLogLine, type ParsedLine } from './LogViewer'
 
@@ -38,7 +38,17 @@ export interface TraceGroup {
   httpStatus?: string
 }
 
-function groupTraces(spans: Span[]): TraceGroup[] {
+// Build route→component map from app triggers (e.g. "/agent/..." → "ai-router")
+function buildRouteMap(app: AppInfo | null): Map<string, string> {
+  const m = new Map<string, string>()
+  if (!app) return m
+  for (const t of app.triggers) {
+    if (t.route && t.component) m.set(t.route, t.component)
+  }
+  return m
+}
+
+function groupTraces(spans: Span[], routeMap: Map<string, string>): TraceGroup[] {
   const map = new Map<string, Span[]>()
   for (const s of spans) {
     const arr = map.get(s.traceId) ?? []; arr.push(s); map.set(s.traceId, arr)
@@ -50,9 +60,16 @@ function groupTraces(spans: Span[]): TraceGroup[] {
     const endMs = Math.max(...sorted.map(s => new Date(s.startTime).getTime() + s.durationMs))
     const durationMs = Math.max(endMs - startMs, root?.durationMs ?? 0)
     const rootAttrs = root?.attrs ?? {}
+    // Spin doesn't set component_id on trace spans (only on metrics).
+    // The root HTTP span has http.route which we can map to a component via the app manifest.
+    const httpRoute = rootAttrs['http.route']
+    const component =
+      (httpRoute && routeMap.get(httpRoute)) ??
+      sorted.find(s => s.component && s.component !== 'spin')?.component ??
+      root?.component ?? ''
     return {
       traceId, rootName: root?.name ?? traceId.slice(0, 8),
-      component: root?.component ?? '',
+      component,
       startMs, endMs: startMs + durationMs, durationMs,
       spanCount: ss.length,
       hasErrors: ss.some(s => s.status === 'ERROR'),
@@ -257,11 +274,20 @@ function Waterfall({
               }
               {isError
                 ? <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
-                : <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                : <div
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: color }}
+                    title={node.span.component ?? undefined}
+                  />
               }
               <span className={`truncate font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
                 {node.span.name}
               </span>
+              {node.span.component && components.length > 1 && (
+                <span className="ml-auto shrink-0 text-[10px] font-mono px-1 py-px rounded" style={{ color, opacity: 0.8 }}>
+                  {node.span.component}
+                </span>
+              )}
             </div>
 
             {/* Duration */}
@@ -377,6 +403,7 @@ function DurationBar({ durationMs, maxDurationMs }: { durationMs: number; maxDur
 export default function TraceViewer() {
   const [searchParams] = useSearchParams()
   const [allSpans, setAllSpans]   = useState<Span[]>([])
+  const [appInfo, setAppInfo]     = useState<AppInfo | null>(null)
   const [error, setError]         = useState<string | null>(null)
   const [selected, setSelected]   = useState<string | null>(null)
   const [filter, setFilter]       = useState('')
@@ -384,6 +411,11 @@ export default function TraceViewer() {
   const [activeTab, setActiveTab] = useState<'waterfall' | 'logs'>('waterfall')
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const navigate = useNavigate()
+
+  // Fetch app manifest once to build the route→component map.
+  useEffect(() => {
+    getApp().then(setAppInfo).catch(() => {})
+  }, [])
 
   // Ref that the refresh button can call to skip the current sleep and fetch immediately.
   const wakeRef = useRef<(() => void) | null>(null)
@@ -418,10 +450,11 @@ export default function TraceViewer() {
     return () => { active = false; ctrl.abort() }
   }, [])
 
+  const routeMap = useMemo(() => buildRouteMap(appInfo), [appInfo])
   const colorMap = useMemo(() => buildColorMap(allSpans), [allSpans])
 
   const traces = useMemo(() => {
-    let all = groupTraces(allSpans)
+    let all = groupTraces(allSpans, routeMap)
     if (errorsOnly) all = all.filter(t => t.hasErrors)
     if (!filter) return all
     const q = filter.toLowerCase()
@@ -541,7 +574,18 @@ export default function TraceViewer() {
                           <span className="badge badge-gray font-mono text-xs px-1.5 py-0.5">{t.httpMethod}</span>
                         )}
                         <span className="font-semibold text-gray-900">{t.rootName}</span>
-                        {t.component && <span className="text-gray-400">— {t.component}</span>}
+                        {t.component && (() => {
+                          const color = colorMap.get(t.component) ?? '#9ca3af'
+                          return (
+                            <span
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono border"
+                              style={{ borderColor: color, color, backgroundColor: `${color}18` }}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                              {t.component}
+                            </span>
+                          )
+                        })()}
                         {t.httpStatus && (
                           <span className={`badge text-xs px-1.5 py-0.5 font-mono ${
                             Number(t.httpStatus) >= 500 ? 'badge-red' :

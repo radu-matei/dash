@@ -127,6 +127,50 @@ const COMP_PALETTE = ['#7c3aed', '#0284c7', '#059669', '#d97706', '#db2777', '#0
 
 function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
   const entries = Object.values(series)
+
+  // Collect all component IDs seen across every metric series, sorted stably.
+  const allComponents = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of entries) {
+      for (const pt of s.points) {
+        const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
+        if (comp) set.add(comp)
+      }
+    }
+    return Array.from(set).sort()
+  }, [entries])
+
+  // Stable color map: component name → palette color.
+  const colorMap = useMemo(() => {
+    const m = new Map<string, string>()
+    allComponents.forEach((c, i) => m.set(c, COMP_PALETTE[i % COMP_PALETTE.length]))
+    return m
+  }, [allComponents])
+
+  // Global active-component set.  New components are auto-activated exactly
+  // once via seenRef; after that, deselections survive data refreshes.
+  const seenRef = useRef(new Set<string>())
+  const [activeComps, setActiveComps] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const fresh = allComponents.filter(c => !seenRef.current.has(c))
+    if (!fresh.length) return
+    fresh.forEach(c => seenRef.current.add(c))
+    setActiveComps(prev => {
+      const next = new Set(prev)
+      fresh.forEach(c => next.add(c))
+      return next
+    })
+  }, [allComponents])
+
+  const toggleComp = (c: string) =>
+    setActiveComps(prev => {
+      const next = new Set(prev)
+      if (next.has(c) && next.size > 1) next.delete(c)
+      else next.add(c)
+      return next
+    })
+
   if (!entries.length) {
     return (
       <div className="card p-6 flex flex-col items-center justify-center h-36 text-gray-400 gap-2">
@@ -138,99 +182,13 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {entries.map(s => <MetricCard key={s.name} series={s} />)}
-    </div>
-  )
-}
-
-function MetricCard({ series }: { series: MetricSeries }) {
-  const unit = inferUnit(series)
-
-  // All unique component IDs present in this series' data points, sorted
-  const allComponents = useMemo(() => {
-    const set = new Set<string>()
-    for (const pt of series.points) {
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
-      if (comp) set.add(comp)
-    }
-    return Array.from(set).sort()
-  }, [series.points])
-
-  // Which components are currently toggled on — all by default.
-  // Auto-add newly-seen components (e.g. after a data refresh).
-  const [activeComps, setActiveComps] = useState<Set<string>>(() => new Set(allComponents))
-  useEffect(() => {
-    setActiveComps(prev => {
-      const missing = allComponents.filter(c => !prev.has(c))
-      if (!missing.length) return prev
-      const next = new Set(prev)
-      missing.forEach(c => next.add(c))
-      return next
-    })
-  }, [allComponents])
-
-  const toggleComp = (c: string) =>
-    setActiveComps(prev => {
-      const next = new Set(prev)
-      // Keep at least one active so the chart is never empty
-      if (next.has(c) && next.size > 1) next.delete(c)
-      else next.add(c)
-      return next
-    })
-
-  const hasComponents = allComponents.length > 0
-
-  // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
-  // All components in a single PeriodicReader export share the same timestamp
-  // (within a second), so fmtTime produces a stable key.
-  const chartData = useMemo(() => {
-    const pts = series.points.slice(-300)
-    const timeMap = new Map<string, Record<string, number | string>>()
-    for (const pt of pts) {
-      const time = fmtTime(pt.timestamp)
-      if (!timeMap.has(time)) timeMap.set(time, { time })
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
-      // Use comp as the key when present; fall back to '_v' for component-less series
-      timeMap.get(time)![comp ?? '_v'] = pt.value
-    }
-    return Array.from(timeMap.values())
-  }, [series.points])
-
-  // Summary bars: for counters accumulate all points; for histograms keep latest
-  const compSummary = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const pt of series.points) {
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
-      if (series.kind === 'counter') m.set(comp, (m.get(comp) ?? 0) + pt.value)
-      else m.set(comp, pt.value)
-    }
-    return Array.from(m.entries())
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-  }, [series.points, series.kind])
-
-  const activeList = allComponents.filter(c => activeComps.has(c))
-  const kindBadge = series.kind === 'counter' ? 'badge-blue' : series.kind === 'histogram' ? 'badge-purple' : 'badge-gray'
-  const gradBase = `grad-${series.name.replace(/\./g, '-')}`
-
-  return (
-    <div className="card p-5">
-      {/* Header */}
-      <div className="flex items-start justify-between mb-2">
-        <div>
-          <p className="text-sm font-semibold text-gray-900 font-mono">{series.name}</p>
-          {series.description && <p className="text-xs text-gray-400 mt-0.5">{series.description}</p>}
-          {unit && <p className="text-xs text-gray-400 font-mono mt-0.5">unit: {unit === 'By' ? 'bytes' : unit === 's' ? 'seconds' : unit}</p>}
-        </div>
-        <span className={`badge ${kindBadge} ml-2 shrink-0`}>{series.kind}</span>
-      </div>
-
-      {/* Component toggle pills */}
-      {hasComponents && (
-        <div className="flex flex-wrap gap-1.5 mb-2">
-          {allComponents.map((c, i) => {
-            const color = COMP_PALETTE[i % COMP_PALETTE.length]
+    <div className="space-y-3">
+      {/* Global component filter — one set of pills controls all charts */}
+      {allComponents.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          <span className="text-xs text-gray-400 font-medium shrink-0">Components:</span>
+          {allComponents.map(c => {
+            const color = colorMap.get(c)!
             const active = activeComps.has(c)
             return (
               <button
@@ -253,16 +211,88 @@ function MetricCard({ series }: { series: MetricSeries }) {
         </div>
       )}
 
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {entries.map(s => (
+          <MetricCard key={s.name} series={s} activeComps={activeComps} colorMap={colorMap} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MetricCard({ series, activeComps, colorMap }: {
+  series: MetricSeries
+  activeComps: Set<string>
+  colorMap: Map<string, string>
+}) {
+  const unit = inferUnit(series)
+
+  // Component IDs present in THIS metric's data (subset of global allComponents)
+  const localComponents = useMemo(() => {
+    const set = new Set<string>()
+    for (const pt of series.points) {
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
+      if (comp) set.add(comp)
+    }
+    return Array.from(set).sort()
+  }, [series.points])
+
+  const hasComponents = localComponents.length > 0
+
+  // Only render lines for components that are both local AND globally active
+  const activeList = localComponents.filter(c => activeComps.has(c))
+
+  // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
+  const chartData = useMemo(() => {
+    const pts = series.points.slice(-300)
+    const timeMap = new Map<string, Record<string, number | string>>()
+    for (const pt of pts) {
+      const time = fmtTime(pt.timestamp)
+      if (!timeMap.has(time)) timeMap.set(time, { time })
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
+      timeMap.get(time)![comp ?? '_v'] = pt.value
+    }
+    return Array.from(timeMap.values())
+  }, [series.points])
+
+  // Summary bars: for counters accumulate all points; for histograms keep latest
+  const compSummary = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const pt of series.points) {
+      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
+      if (series.kind === 'counter') m.set(comp, (m.get(comp) ?? 0) + pt.value)
+      else m.set(comp, pt.value)
+    }
+    return Array.from(m.entries())
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+  }, [series.points, series.kind])
+
+  const kindBadge = series.kind === 'counter' ? 'badge-blue' : series.kind === 'histogram' ? 'badge-purple' : 'badge-gray'
+  const gradBase = `grad-${series.name.replace(/\./g, '-')}`
+
+  return (
+    <div className="card p-5">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <p className="text-sm font-semibold text-gray-900 font-mono">{series.name}</p>
+          {series.description && <p className="text-xs text-gray-400 mt-0.5">{series.description}</p>}
+          {unit && <p className="text-xs text-gray-400 font-mono mt-0.5">unit: {unit === 'By' ? 'bytes' : unit === 's' ? 'seconds' : unit}</p>}
+        </div>
+        <span className={`badge ${kindBadge} ml-2 shrink-0`}>{series.kind}</span>
+      </div>
+
       {/* Timeline chart — one Area per active component */}
       {chartData.length > 1 && (
         <ResponsiveContainer width="100%" height={100}>
           <AreaChart data={chartData} margin={{ top: 2, right: 4, left: 2, bottom: 0 }}>
             <defs>
               {hasComponents
-                ? allComponents.map((c, i) => {
-                    const color = COMP_PALETTE[i % COMP_PALETTE.length]
+                ? localComponents.map(c => {
+                    const color = colorMap.get(c) ?? '#7c3aed'
                     return (
-                      <linearGradient key={c} id={`${gradBase}-${i}`} x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient key={c} id={`${gradBase}-${c.replace(/\W/g, '_')}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={color} stopOpacity={0.2} />
                         <stop offset="95%" stopColor={color} stopOpacity={0} />
                       </linearGradient>
@@ -289,8 +319,7 @@ function MetricCard({ series }: { series: MetricSeries }) {
             />
             {hasComponents
               ? activeList.map(c => {
-                  const i = allComponents.indexOf(c)
-                  const color = COMP_PALETTE[i % COMP_PALETTE.length]
+                  const color = colorMap.get(c) ?? '#7c3aed'
                   return (
                     <Area
                       key={c}
@@ -298,7 +327,7 @@ function MetricCard({ series }: { series: MetricSeries }) {
                       dataKey={c}
                       name={c}
                       stroke={color}
-                      fill={`url(#${gradBase}-${i})`}
+                      fill={`url(#${gradBase}-${c.replace(/\W/g, '_')})`}
                       strokeWidth={1.5}
                       dot={false}
                       connectNulls
@@ -318,10 +347,10 @@ function MetricCard({ series }: { series: MetricSeries }) {
           <div className="space-y-1.5">
             {compSummary.map(c => {
               const maxVal = compSummary[0].value
-              const i = allComponents.indexOf(c.name)
-              const color = i >= 0 ? COMP_PALETTE[i % COMP_PALETTE.length] : '#7c3aed'
+              const color = colorMap.get(c.name) ?? '#7c3aed'
+              const isActive = c.name === '_total' || activeComps.has(c.name)
               return (
-                <div key={c.name} className="flex items-center gap-2 text-xs">
+                <div key={c.name} className={`flex items-center gap-2 text-xs transition-opacity ${isActive ? '' : 'opacity-30'}`}>
                   <span className="w-28 truncate text-gray-600 font-mono" title={c.name}>
                     {c.name === '_total' ? 'total' : c.name}
                   </span>
@@ -353,15 +382,24 @@ function TraceSection({ spans }: { spans: Span[] }) {
     for (const s of spans) {
       const arr = byTrace.get(s.traceId) ?? []; arr.push(s); byTrace.set(s.traceId, arr)
     }
-    const roots: Span[] = []
-    for (const ss of byTrace.values()) {
-      roots.push(ss.find(s => !s.parentId) ?? ss[0])
-    }
-    roots.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
 
-    const total = roots.length
-    const errors = roots.filter(s => s.status === 'ERROR').length
-    const durations = roots.map(s => s.durationMs).sort((a, b) => a - b)
+    // Build trace summaries: use full wall-clock duration (first span start → last
+    // span end) so latency reflects the entire request, not just the root span.
+    // Spin's outermost HTTP trigger span exits almost immediately; the actual work
+    // is in child spans, so root.durationMs would be misleadingly tiny.
+    const traces = Array.from(byTrace.values()).map(ss => {
+      const sorted = [...ss].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+      const root = sorted.find(s => !s.parentId) ?? sorted[0]
+      const startMs = new Date(sorted[0].startTime).getTime()
+      const endMs = Math.max(...sorted.map(s => new Date(s.startTime).getTime() + s.durationMs))
+      const durationMs = Math.max(endMs - startMs, root?.durationMs ?? 0)
+      return { root, hasError: ss.some(s => s.status === 'ERROR'), startMs, durationMs }
+    })
+    traces.sort((a, b) => a.startMs - b.startMs)
+
+    const total = traces.length
+    const errors = traces.filter(t => t.hasError).length
+    const durations = traces.map(t => t.durationMs).sort((a, b) => a - b)
     const p50 = percentile(durations, 50)
     const p95 = percentile(durations, 95)
     const p99 = percentile(durations, 99)
@@ -369,10 +407,10 @@ function TraceSection({ spans }: { spans: Span[] }) {
 
     const BUCKET_MS = 60_000
     const buckets = new Map<number, { requests: number; errors: number }>()
-    for (const r of roots) {
-      const t = Math.floor(new Date(r.startTime).getTime() / BUCKET_MS) * BUCKET_MS
+    for (const { startMs, hasError } of traces) {
+      const t = Math.floor(startMs / BUCKET_MS) * BUCKET_MS
       const b = buckets.get(t) ?? { requests: 0, errors: 0 }
-      b.requests++; if (r.status === 'ERROR') b.errors++
+      b.requests++; if (hasError) b.errors++
       buckets.set(t, b)
     }
     const timeline = Array.from(buckets.entries())
@@ -383,7 +421,7 @@ function TraceSection({ spans }: { spans: Span[] }) {
       }))
 
     const HIST_EDGES = [0, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, Infinity]
-    const HIST_LABELS = ['<5ms','5ms','10ms','25ms','50ms','100ms','250ms','500ms','1s','2.5s','5s+']
+    const HIST_LABELS = ['<5ms', '5ms', '10ms', '25ms', '50ms', '100ms', '250ms', '500ms', '1s', '2.5s', '5s+']
     const hist = HIST_LABELS.map(l => ({ label: l, count: 0 }))
     for (const d of durations) {
       const i = HIST_EDGES.findIndex((b, idx) => d < b && idx > 0)
