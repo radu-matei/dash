@@ -15,12 +15,10 @@ import {
   Hammer,
   Key,
   Layers,
-  LayoutList,
   Loader2,
   Lock,
   Network,
   Package,
-  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -154,26 +152,6 @@ const TRIGGER_NODE_COLORS: Record<TriggerMeta['color'], {
   teal:   { hi: 'bg-teal-50 border-2 border-teal-400 shadow-md shadow-teal-100',       sec: 'bg-teal-50/60 border border-teal-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-teal-300 hover:shadow',   iconBgHi: 'bg-teal-100 border-teal-200',     iconBgDef: 'bg-teal-50 border-teal-100',     iconColor: 'text-teal-600',   labelColor: 'text-teal-700'   },
   blue:   { hi: 'bg-blue-50 border-2 border-blue-400 shadow-md shadow-blue-100',       sec: 'bg-blue-50/60 border border-blue-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow',   iconBgHi: 'bg-blue-100 border-blue-200',     iconBgDef: 'bg-blue-50 border-blue-100',     iconColor: 'text-blue-600',   labelColor: 'text-blue-700'   },
   gray:   { hi: 'bg-gray-100 border-2 border-gray-400 shadow-md',                      sec: 'bg-gray-50/60 border border-gray-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-gray-400 hover:shadow',   iconBgHi: 'bg-gray-200 border-gray-300',     iconBgDef: 'bg-gray-100 border-gray-200',    iconColor: 'text-gray-500',   labelColor: 'text-gray-600'   },
-}
-
-const TRIGGER_BADGE_CLS: Record<TriggerMeta['color'], string> = {
-  green:  'badge-green',
-  red:    'badge-red',
-  orange: 'badge-orange',
-  purple: 'badge-purple',
-  teal:   'badge-teal',
-  blue:   'badge-blue',
-  gray:   'badge-gray',
-}
-
-function TriggerBadge({ type }: { type: string }) {
-  const meta = getTriggerMeta(type)
-  const TIcon = meta.icon
-  return (
-    <span className={`${TRIGGER_BADGE_CLS[meta.color]} badge font-mono uppercase`}>
-      <TIcon className="w-3 h-3" />{meta.label}
-    </span>
-  )
 }
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
@@ -312,10 +290,11 @@ function usePaneResize(
 // ─── Detail pane (component) ──────────────────────────────────────────────────
 
 function DetailPane({
-  component: c, onClose, paneWidth, onPaneWidthChange,
+  component: c, onClose, onSelect, paneWidth, onPaneWidthChange,
 }: {
   component: ComponentInfo
   onClose: () => void
+  onSelect: (s: Selection) => void
   paneWidth: number
   onPaneWidthChange: (w: number) => void
 }) {
@@ -390,22 +369,24 @@ function DetailPane({
         {c.triggers && c.triggers.length > 0 && (
           <PaneSection title="Triggers" Icon={Zap} count={c.triggers.length}>
             {c.triggers.map((t, i) => {
+              const meta  = getTriggerMeta(t.type)
               if (t.private) {
                 return (
                   <InfoRow key={i} Icon={Lock}
                     main="Private endpoint"
                     sub="Internal only · reachable via local service chaining"
                     tag="Private" tagColor="gray"
+                    onClick={() => onSelect({ kind: 'trigger-group', triggerType: t.type })}
                   />
                 )
               }
-              const meta  = getTriggerMeta(t.type)
               const route = t.route ?? t.channel ?? t.address ?? '—'
               return (
                 <InfoRow key={i} Icon={meta.icon} main={route}
                   sub={`${meta.label} trigger`}
                   tag={meta.label.toUpperCase()}
                   tagColor={meta.color as 'green' | 'red' | 'orange' | 'teal' | 'purple' | 'blue' | 'gray'}
+                  onClick={() => onSelect({ kind: 'trigger-group', triggerType: t.type })}
                 />
               )
             })}
@@ -456,7 +437,9 @@ function DetailPane({
               return (
                 <div key={s} className="flex items-center gap-1 group">
                   <div className="flex-1 min-w-0">
-                    <InfoRow Icon={Key} main={s} sub="Key-value store" tag="KV Store" tagColor="purple" />
+                    <InfoRow Icon={Key} main={s} sub="Key-value store" tag="KV Store" tagColor="purple"
+                      onClick={() => onSelect({ kind: 'resource', resKind: 'kv', resName: s })}
+                    />
                   </div>
                   <button
                     className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
@@ -482,7 +465,9 @@ function DetailPane({
               return (
                 <div key={s} className="flex items-center gap-1 group">
                   <div className="flex-1 min-w-0">
-                    <InfoRow Icon={Database} main={s} sub="SQLite database" tag="SQLite" tagColor="blue" />
+                    <InfoRow Icon={Database} main={s} sub="SQLite database" tag="SQLite" tagColor="blue"
+                      onClick={() => onSelect({ kind: 'resource', resKind: 'sqlite', resName: s })}
+                    />
                   </div>
                   <button
                     className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
@@ -502,9 +487,14 @@ function DetailPane({
 
         {/* Variables — wired to this component */}
         {c.variables && Object.keys(c.variables).length > 0 && (
-          <PaneSection title="Variables" Icon={Layers} count={Object.keys(c.variables).length}>
+          <PaneSection title="Variables" Icon={Key} count={Object.keys(c.variables).length}>
             {Object.entries(c.variables).map(([k, v]) => (
-              <InfoRow key={k} Icon={Layers} main={`${k} = ${v || '(empty)'}`} sub="Wired to component" tagColor="gray" />
+              <InfoRow key={k} Icon={Key}
+                main={k}
+                sub={v || '(empty)'}
+                tagColor="gray"
+                onClick={() => onSelect({ kind: 'variable', varName: k })}
+              />
             ))}
           </PaneSection>
         )}
@@ -567,12 +557,14 @@ function bez(x1: number, y1: number, x2: number, y2: number) {
 }
 
 // Clicking a component opens its detail pane.
-// Clicking a trigger-group highlights all connected components (no pane).
+// Clicking a trigger-group opens the trigger pane.
 // Clicking a variable node opens the variable pane.
+// Clicking a resource (KV/SQLite) opens the resource pane.
 type Selection =
   | { kind: 'component';     componentId: string }
   | { kind: 'trigger-group'; triggerType: string }
   | { kind: 'variable';      varName: string }
+  | { kind: 'resource';      resKind: 'kv' | 'sqlite'; resName: string }
 
 // Hover target — any node type.
 type ActiveTarget =
@@ -584,6 +576,7 @@ type ActiveTarget =
 function selectionToActive(s: Selection): ActiveTarget {
   if (s.kind === 'trigger-group') return { kind: 'trigger-group', triggerType: s.triggerType }
   if (s.kind === 'variable')      return { kind: 'variable', varName: s.varName }
+  if (s.kind === 'resource')      return { kind: 'resource', resKind: s.resKind, resName: s.resName }
   return { kind: 'component', componentId: s.componentId }
 }
 
@@ -1004,23 +997,25 @@ function TopologyGraph({
 
         {/* Resource nodes */}
         {hasResources && resources.map((r, ri) => {
-          const isKV  = r.kind === 'kv'
-          const state = resourceState(r.kind, r.name)
+          const isKV   = r.kind === 'kv'
+          const state  = resourceState(r.kind, r.name)
           const usedBy = sharedCount(r.kind, r.name)
+          const isPinned = selected?.kind === 'resource' && selected.resKind === r.kind && selected.resName === r.name
           return (
             <div key={`r-${ri}`}
               className={`absolute flex items-center bg-white rounded-xl shadow-sm overflow-hidden border cursor-pointer transition-all ${
                 state === 'hi'
-                  ? (isKV ? 'border-purple-400 shadow-purple-100 shadow-md' : 'border-blue-400 shadow-blue-100 shadow-md')
+                  ? (isKV ? 'border-purple-400 shadow-purple-100 shadow-md ring-2 ring-purple-300/60' : 'border-blue-400 shadow-blue-100 shadow-md ring-2 ring-blue-300/60')
                   : state === 'sec'
                   ? (isKV ? 'border-purple-300' : 'border-blue-300')
-                  : (isKV ? 'border-purple-200 hover:border-purple-300' : 'border-blue-200 hover:border-blue-300')
+                  : (isKV ? 'border-purple-200 hover:border-purple-300 hover:shadow' : 'border-blue-200 hover:border-blue-300 hover:shadow')
               }`}
               style={{
                 left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
                 opacity: state === 'lo' ? 0.35 : 1,
                 transition: 'opacity 0.15s, box-shadow 0.15s',
               }}
+              onClick={() => onSelect(isPinned ? null : { kind: 'resource', resKind: r.kind, resName: r.name })}
               onMouseEnter={() => setHovered({ kind: 'resource', resKind: r.kind, resName: r.name })}
               onMouseLeave={() => setHovered(null)}
             >
@@ -1107,87 +1102,6 @@ function TopologyGraph({
 
 // ─── List view ────────────────────────────────────────────────────────────────
 
-function ComponentRow({ comp }: { comp: ComponentInfo }) {
-  const [expanded, setExpanded] = useState(false)
-  const lang = detectLang(comp)
-  return (
-    <>
-      <tr className="cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setExpanded(e => !e)}>
-        <td className="px-4 py-3 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-spin-oxfordblue flex items-center justify-center shrink-0">
-              <Icon
-                icon={lang ? lang.iconName : 'simple-icons:webassembly'}
-                width={14} height={14}
-                className="text-white/80"
-              /></div>
-            <span className="font-semibold text-gray-900 text-sm">{comp.id}</span>
-          </div>
-        </td>
-        <td className="px-4 py-3 border-b border-gray-100">
-          <div className="flex flex-wrap gap-1">
-            {comp.triggers?.map((t, i) => (
-              <div key={i} className="flex items-center gap-1">
-                <TriggerBadge type={t.type} />
-                {(t.route || t.channel) && <code className="text-xs text-gray-600 font-mono">{t.route ?? t.channel}</code>}
-              </div>
-            ))}
-            {(!comp.triggers || comp.triggers.length === 0) && <span className="text-gray-400 text-xs">No triggers</span>}
-          </div>
-        </td>
-        <td className="px-4 py-3 border-b border-gray-100">
-          {(comp.keyValueStores ?? []).length
-            ? <div className="flex flex-wrap gap-1">{comp.keyValueStores!.map(s => <span key={s} className="badge badge-purple"><Key className="w-3 h-3" />{s}</span>)}</div>
-            : <span className="text-gray-400 text-xs">—</span>}
-        </td>
-        <td className="px-4 py-3 border-b border-gray-100">
-          {(comp.sqliteDatabases ?? []).length
-            ? <div className="flex flex-wrap gap-1">{comp.sqliteDatabases!.map(s => <span key={s} className="badge badge-blue"><Database className="w-3 h-3" />{s}</span>)}</div>
-            : <span className="text-gray-400 text-xs">—</span>}
-        </td>
-        <td className="px-4 py-3 border-b border-gray-100 text-right">
-          <button className="text-gray-400 hover:text-gray-700 transition-colors text-xs">{expanded ? '▲' : '▼'}</button>
-        </td>
-      </tr>
-      {expanded && (
-        <tr>
-          <td colSpan={5} className="px-4 pb-3 border-b border-gray-100 bg-gray-50">
-            <div className="space-y-3 pt-2">
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Source</p>
-                <code className="text-xs font-mono text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">{comp.source || '—'}</code>
-              </div>
-              {comp.build?.command && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Build</p>
-                  <code className="text-xs font-mono text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">{comp.build.command}</code>
-                  {comp.build.workdir && <span className="ml-2 text-xs text-gray-400">(in {comp.build.workdir})</span>}
-                </div>
-              )}
-              {comp.allowedOutboundHosts && comp.allowedOutboundHosts.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Allowed outbound hosts</p>
-                  <div className="flex flex-wrap gap-1">
-                    {comp.allowedOutboundHosts.map(h => <span key={h} className="badge badge-gray font-mono"><ExternalLink className="w-3 h-3" />{h}</span>)}
-                  </div>
-                </div>
-              )}
-              {comp.variables && Object.keys(comp.variables).length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Variables</p>
-                  <div className="flex flex-wrap gap-1">
-                    {Object.entries(comp.variables).map(([k, v]) => <span key={k} className="badge badge-gray font-mono text-xs">{k}={v}</span>)}
-                  </div>
-                </div>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
-    </>
-  )
-}
-
 // ─── Variable pane ────────────────────────────────────────────────────────────
 
 const SOURCE_BADGE: Record<string, string> = {
@@ -1204,12 +1118,13 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 function VariablePane({
-  varName, vars, components, onClose, onAddVar, paneWidth, onPaneWidthChange,
+  varName, vars, components, onClose, onSelect, onAddVar, paneWidth, onPaneWidthChange,
 }: {
   varName: string
   vars: VarEntry[]
   components: ComponentInfo[]
   onClose: () => void
+  onSelect: (s: Selection) => void
   onAddVar: () => void
   paneWidth: number
   onPaneWidthChange: (w: number) => void
@@ -1297,10 +1212,14 @@ function VariablePane({
         {usedBy.length > 0 && (
           <PaneSection title="Used by" Icon={Package} count={usedBy.length}>
             {usedBy.map(c => {
-              const binding = c.variables?.[varName] ?? ''
+              const binding    = c.variables?.[varName] ?? ''
               const isIndirect = binding && binding !== `{{ ${varName} }}`
               return (
-                <div key={c.id} className="flex items-start gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2">
+                <button
+                  key={c.id}
+                  className="w-full flex items-start gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 text-left hover:border-gray-300 hover:bg-gray-50 transition-colors"
+                  onClick={() => onSelect({ kind: 'component', componentId: c.id })}
+                >
                   <Package className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
                   <div className="min-w-0 flex-1">
                     <code className="text-xs font-mono text-gray-800">{c.id}</code>
@@ -1310,7 +1229,8 @@ function VariablePane({
                       </code>
                     )}
                   </div>
-                </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0 mt-0.5" />
+                </button>
               )
             })}
           </PaneSection>
@@ -1335,15 +1255,133 @@ function VariablePane({
   )
 }
 
+// ─── Resource pane (KV store / SQLite) ────────────────────────────────────────
+
+function ResourcePane({
+  resKind, resName, components, onClose, onSelect, paneWidth, onPaneWidthChange,
+}: {
+  resKind: 'kv' | 'sqlite'
+  resName: string
+  components: ComponentInfo[]
+  onClose: () => void
+  onSelect: (s: Selection) => void
+  paneWidth: number
+  onPaneWidthChange: (w: number) => void
+}) {
+  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
+  const isKV = resKind === 'kv'
+
+  const usedBy = components.filter(c =>
+    isKV
+      ? (c.keyValueStores ?? []).includes(resName)
+      : (c.sqliteDatabases ?? []).includes(resName),
+  )
+
+  return (
+    <div
+      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
+      style={{ width: paneWidth }}
+    >
+      {/* Drag handle */}
+      <div
+        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors ${isKV ? 'hover:bg-purple-300/60' : 'hover:bg-blue-300/60'}`}
+        onMouseDown={handleDragMouseDown}
+      />
+
+      {/* Header */}
+      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isKV ? 'bg-purple-100' : 'bg-blue-100'}`}>
+            {isKV
+              ? <Key className="w-4 h-4 text-purple-600" />
+              : <Database className="w-4 h-4 text-blue-600" />}
+          </div>
+          <div className="min-w-0">
+            <div className="text-base font-bold text-gray-900 font-mono">{resName}</div>
+            <div className={`text-xs mt-0.5 font-medium ${isKV ? 'text-purple-500' : 'text-blue-500'}`}>
+              {isKV ? 'Key-Value Store' : 'SQLite Database'}
+            </div>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+        {/* Used by */}
+        <PaneSection title="Components using this store" Icon={Package} count={usedBy.length}>
+          {usedBy.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No components bound yet.</p>
+          ) : usedBy.map(c => (
+            <button
+              key={c.id}
+              className="w-full flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 text-left hover:border-gray-300 hover:bg-gray-50 transition-colors"
+              onClick={() => onSelect({ kind: 'component', componentId: c.id })}
+            >
+              <Package className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <code className="text-xs font-mono text-gray-800 flex-1">{c.id}</code>
+              {(() => { const lang = detectLang(c); return lang ? <LangIcon comp={c} size={14} /> : null })()}
+              <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+            </button>
+          ))}
+        </PaneSection>
+
+        {/* Info box */}
+        <div className={`border rounded-xl p-3 space-y-1.5 text-xs ${isKV ? 'bg-purple-50 border-purple-100' : 'bg-blue-50 border-blue-100'}`}>
+          {isKV ? (
+            <>
+              <p className="font-semibold text-purple-800">About key-value stores</p>
+              <p className="text-purple-700">
+                The label <code className="font-mono bg-purple-100 px-1 rounded">default</code> refers to Spin's
+                built-in store. Custom store labels can be mapped to external providers (e.g. Redis, Azure Blob)
+                via Spin runtime config.
+              </p>
+              <a
+                href="https://spinframework.dev/v3/kv-store-api-guide"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-purple-600 hover:text-purple-800 underline"
+              >
+                Key Value Store docs <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          ) : (
+            <>
+              <p className="font-semibold text-blue-800">About SQLite databases</p>
+              <p className="text-blue-700">
+                The label <code className="font-mono bg-blue-100 px-1 rounded">default</code> refers to Spin's
+                built-in SQLite instance. Custom database labels can be mapped to persistent files or LibSQL/Turso
+                via runtime config.
+              </p>
+              <a
+                href="https://spinframework.dev/v3/sqlite-api-guide"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-800 underline"
+              >
+                SQLite Storage docs <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Trigger pane ─────────────────────────────────────────────────────────────
 
 function TriggerPane({
-  triggerType, triggers, components, onClose, paneWidth, onPaneWidthChange,
+  triggerType, triggers, components, onClose, onSelect, paneWidth, onPaneWidthChange,
 }: {
   triggerType: string
   triggers: TriggerInfo[]
   components: ComponentInfo[]
   onClose: () => void
+  onSelect: (s: Selection) => void
   paneWidth: number
   onPaneWidthChange: (w: number) => void
 }) {
@@ -1404,19 +1442,19 @@ function TriggerPane({
                 )}
               </div>
 
-              {/* Component */}
-              <div className="flex items-center gap-2 px-3 py-2">
+              {/* Component — clickable to open detail pane */}
+              <button
+                className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 transition-colors"
+                onClick={() => onSelect({ kind: 'component', componentId: t.component })}
+              >
                 <Package className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                <code className="text-xs font-mono text-gray-700">{t.component}</code>
+                <code className="text-xs font-mono text-gray-700 flex-1">{t.component}</code>
                 {comp && (() => {
                   const lang = detectLang(comp)
-                  return lang ? (
-                    <span className="ml-auto">
-                      <LangIcon comp={comp} size={14} />
-                    </span>
-                  ) : null
+                  return lang ? <LangIcon comp={comp} size={14} /> : null
                 })()}
-              </div>
+                <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+              </button>
             </div>
           )
         })}
@@ -1427,13 +1465,11 @@ function TriggerPane({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-type ViewMode = 'graph' | 'list'
 
 export default function AppOverview() {
   const { app, refresh }    = useAppStore()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
-  const [view, setView]     = useState<ViewMode>('graph')
   const [selected, setSelected] = useState<Selection | null>(null)
 
   const [showAddComp, setShowAddComp]       = useState(false)
@@ -1473,6 +1509,7 @@ export default function AppOverview() {
 
   const selectedVarName     = selected?.kind === 'variable'      ? selected.varName     : null
   const selectedTriggerType = selected?.kind === 'trigger-group' ? selected.triggerType : null
+  const selectedResource    = selected?.kind === 'resource'      ? selected             : null
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -1526,31 +1563,6 @@ export default function AppOverview() {
             {restarting ? 'Restarting…' : 'Restart'}
           </button>
 
-          <button
-            className="btn-secondary text-xs"
-            onClick={() => setShowEditToml(true)}
-            title="Open spin.toml in an editable text view"
-          >
-            <Pencil className="w-3.5 h-3.5" /> Edit spin.toml
-          </button>
-
-          <div className="w-px h-5 bg-gray-200 mx-1" />
-
-          {/* View toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-            <button
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md font-medium transition-all ${view === 'graph' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              onClick={() => setView('graph')}
-            >
-              <Network className="w-3.5 h-3.5" /> Graph
-            </button>
-            <button
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md font-medium transition-all ${view === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
-              onClick={() => setView('list')}
-            >
-              <LayoutList className="w-3.5 h-3.5" /> List
-            </button>
-          </div>
         </div>
       </div>
 
@@ -1572,76 +1584,22 @@ export default function AppOverview() {
               <StatCard label="Status"     value={app?.status ?? '—'} Icon={CheckCircle2} />
             </div>
 
-            {view === 'graph' ? (
-              <div className="card p-6">
-                {components.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-2">
-                    <Network className="w-8 h-8 opacity-25" />
-                    <p className="text-sm">No components found.</p>
-                  </div>
-                ) : (
-                  <TopologyGraph
-                    components={components}
-                    triggers={triggers}
-                    variableKeys={app?.variableKeys ?? []}
-                    selected={selected}
-                    onSelect={setSelected}
-                  />
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {components.length > 0 && (
-                  <div className="card overflow-hidden">
-                    <div className="px-5 py-4 border-b border-gray-100">
-                      <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-spin-midgreen" />
-                        Components
-                        <span className="badge badge-gray ml-1">{components.length}</span>
-                      </h2>
-                    </div>
-                    <table className="w-full text-sm border-collapse">
-                      <thead>
-                        <tr className="bg-gray-50 border-b border-gray-200">
-                          {['Component', 'Triggers', 'KV Stores', 'SQLite DBs', ''].map(h => (
-                            <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {components.map(comp => <ComponentRow key={comp.id} comp={comp} />)}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {triggers.length > 0 && (
-                  <div className="card overflow-hidden">
-                    <div className="px-5 py-4 border-b border-gray-100">
-                      <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-spin-midgreen" /> Triggers
-                      </h2>
-                    </div>
-                    <table className="data-table">
-                      <thead><tr><th>Type</th><th>Route / Channel</th><th>Component</th></tr></thead>
-                      <tbody>
-                        {triggers.map((t, i) => (
-                          <tr key={i}>
-                            <td><TriggerBadge type={t.type} /></td>
-                            <td>
-                              {t.private
-                                ? <span className="flex items-center gap-1 text-gray-400 text-xs italic"><Lock className="w-3 h-3" /> private endpoint</span>
-                                : <code className="font-mono text-xs text-gray-700">{t.route ?? t.channel ?? t.address ?? '—'}</code>
-                              }
-                            </td>
-                            <td><span className="badge badge-gray font-mono">{t.component}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
+            <div className="card p-6">
+              {components.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-2">
+                  <Network className="w-8 h-8 opacity-25" />
+                  <p className="text-sm">No components found.</p>
+                </div>
+              ) : (
+                <TopologyGraph
+                  components={components}
+                  triggers={triggers}
+                  variableKeys={app?.variableKeys ?? []}
+                  selected={selected}
+                  onSelect={setSelected}
+                />
+              )}
+            </div>
           </div>
         </div>
 
@@ -1650,6 +1608,7 @@ export default function AppOverview() {
           <DetailPane
             component={selectedComponent}
             onClose={() => setSelected(null)}
+            onSelect={setSelected}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
           />
@@ -1662,6 +1621,7 @@ export default function AppOverview() {
             vars={vars}
             components={components}
             onClose={() => setSelected(null)}
+            onSelect={setSelected}
             onAddVar={() => setShowAddVar(true)}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
@@ -1675,6 +1635,20 @@ export default function AppOverview() {
             triggers={triggers.filter(t => t.type === selectedTriggerType)}
             components={components}
             onClose={() => setSelected(null)}
+            onSelect={setSelected}
+            paneWidth={paneWidth}
+            onPaneWidthChange={setPaneWidth}
+          />
+        )}
+
+        {/* Detail pane — resource (KV / SQLite) */}
+        {selectedResource && (
+          <ResourcePane
+            resKind={selectedResource.resKind}
+            resName={selectedResource.resName}
+            components={components}
+            onClose={() => setSelected(null)}
+            onSelect={setSelected}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
           />
