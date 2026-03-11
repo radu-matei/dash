@@ -518,17 +518,21 @@ function bez(x1: number, y1: number, x2: number, y2: number) {
   return `M ${x1} ${y1} C ${cx} ${y1} ${cx} ${y2} ${x2} ${y2}`
 }
 
-interface Selection { kind: 'trigger' | 'component'; componentId: string; triggerIdx?: number }
+// Clicking a component opens its detail pane.
+// Clicking a trigger-group highlights all connected components (no pane).
+type Selection =
+  | { kind: 'component';     componentId: string }
+  | { kind: 'trigger-group'; triggerType: string }
 
-// Hover target can be any node type, not just those that open the detail pane.
+// Hover target — any node type.
 type ActiveTarget =
-  | { kind: 'trigger';   componentId: string; triggerIdx: number }
-  | { kind: 'component'; componentId: string }
-  | { kind: 'resource';  resKind: 'kv' | 'sqlite'; resName: string }
-  | { kind: 'variable';  varName: string }
+  | { kind: 'trigger-group'; triggerType: string }
+  | { kind: 'component';     componentId: string }
+  | { kind: 'resource';      resKind: 'kv' | 'sqlite'; resName: string }
+  | { kind: 'variable';      varName: string }
 
 function selectionToActive(s: Selection): ActiveTarget {
-  if (s.kind === 'trigger') return { kind: 'trigger', componentId: s.componentId, triggerIdx: s.triggerIdx! }
+  if (s.kind === 'trigger-group') return { kind: 'trigger-group', triggerType: s.triggerType }
   return { kind: 'component', componentId: s.componentId }
 }
 
@@ -560,10 +564,21 @@ function TopologyGraph({
   // Hovered takes priority; otherwise fall back to the pinned selection.
   const active: ActiveTarget | null = hovered ?? (selected ? selectionToActive(selected) : null)
 
-  // Sort triggers so they follow the component order — prevents all crossings.
+  // ── Trigger groups ────────────────────────────────────────────────────────
+  // Group triggers by type so we render ONE node per type with multiple arrows.
+  // We preserve insertion order: the first component that uses each type
+  // determines the group's position in the list (minimises edge crossings).
   const sortedTriggers = components.flatMap(c => triggers.filter(t => t.component === c.id))
   const knownComponentIds = new Set(components.map(c => c.id))
   sortedTriggers.push(...triggers.filter(t => !knownComponentIds.has(t.component)))
+
+  interface TriggerGroup { type: string; triggers: TriggerInfo[] }
+  const triggerGroups: TriggerGroup[] = []
+  for (const t of sortedTriggers) {
+    const existing = triggerGroups.find(g => g.type === t.type)
+    if (existing) existing.triggers.push(t)
+    else triggerGroups.push({ type: t.type, triggers: [t] })
+  }
 
   // Resources (KV + SQLite)
   const kvStores  = [...new Set(components.flatMap(c => c.keyValueStores  ?? []))]
@@ -579,19 +594,19 @@ function TopologyGraph({
   const varNames = variableKeys
   const hasVars  = varNames.length > 0
 
-  // Canvas dimensions
+  // Canvas dimensions — groups replace individual triggers in the height calc.
   const rightmostX = hasVars ? VAR_X : hasResources ? RES_X : COMP_X
   const rightmostW = hasVars ? VAR_NODE_W : NODE_W
   const svgW   = rightmostX + rightmostW + PADDING
   const innerH = Math.max(
-    colH(sortedTriggers.length),
+    colH(triggerGroups.length),
     colH(components.length),
     colH(resources.length),
     varColH(varNames.length),
   )
   const totalH = innerH + PADDING * 2
 
-  const tOff = colOff(sortedTriggers.length, totalH)
+  const tOff = colOff(triggerGroups.length, totalH)
   const cOff = colOff(components.length, totalH)
   const rOff = colOff(resources.length, totalH)
   const vOff = varColOff(varNames.length, totalH)
@@ -605,26 +620,29 @@ function TopologyGraph({
 
   // ── Edge visibility helpers ───────────────────────────────────────────────
 
-  const triggerEdgeActive = (compId: string, ti: number): boolean => {
+  // An edge from a trigger group is lit when:
+  //  • that trigger group is active (all its edges light up)
+  //  • the target component is active (only the edge to it lights up)
+  const triggerEdgeActive = (triggerType: string, compId: string): boolean => {
     if (!active) return false
-    if (active.kind === 'trigger')   return active.componentId === compId && active.triggerIdx === ti
-    if (active.kind === 'component') return active.componentId === compId
+    if (active.kind === 'trigger-group') return active.triggerType === triggerType
+    if (active.kind === 'component')     return active.componentId === compId
     return false
   }
 
   const resourceEdgeActive = (compId: string, resKind: 'kv' | 'sqlite', resName: string): boolean => {
     if (!active) return false
-    if (active.kind === 'component') return active.componentId === compId
-    if (active.kind === 'trigger')   return active.componentId === compId
-    if (active.kind === 'resource')  return active.resKind === resKind && active.resName === resName
+    if (active.kind === 'component')     return active.componentId === compId
+    if (active.kind === 'trigger-group') return triggers.some(t => t.component === compId && t.type === active.triggerType)
+    if (active.kind === 'resource')      return active.resKind === resKind && active.resName === resName
     return false
   }
 
   const varEdgeActive = (compId: string, varName: string): boolean => {
     if (!active) return false
-    if (active.kind === 'component') return active.componentId === compId
-    if (active.kind === 'trigger')   return active.componentId === compId
-    if (active.kind === 'variable')  return active.varName === varName
+    if (active.kind === 'component')     return active.componentId === compId
+    if (active.kind === 'trigger-group') return triggers.some(t => t.component === compId && t.type === active.triggerType)
+    if (active.kind === 'variable')      return active.varName === varName
     return false
   }
 
@@ -633,24 +651,29 @@ function TopologyGraph({
 
   type NodeState = 'hi' | 'sec' | 'lo' | 'normal'
 
-  const triggerState = (compId: string, ti: number): NodeState => {
+  // Returns the component IDs connected to a trigger group.
+  const groupCompIds = (type: string) =>
+    triggers.filter(t => t.type === type).map(t => t.component)
+
+  const triggerGroupState = (type: string): NodeState => {
     if (!active) return 'normal'
-    if (active.kind === 'trigger')   return active.componentId === compId && active.triggerIdx === ti ? 'hi' : 'lo'
-    if (active.kind === 'component') return active.componentId === compId ? 'sec' : 'lo'
+    if (active.kind === 'trigger-group') return active.triggerType === type ? 'hi' : 'lo'
+    if (active.kind === 'component') {
+      return groupCompIds(type).includes(active.componentId) ? 'sec' : 'lo'
+    }
     if (active.kind === 'resource' || active.kind === 'variable') {
-      // Dim triggers of unrelated components
       const relatedCompIds = active.kind === 'resource'
         ? components.filter(c => (active.resKind === 'kv' ? c.keyValueStores : c.sqliteDatabases ?? [])?.includes(active.resName)).map(c => c.id)
         : components.filter(c => componentUsesVar(c, active.varName)).map(c => c.id)
-      return relatedCompIds.includes(compId) ? 'sec' : 'lo'
+      return groupCompIds(type).some(id => relatedCompIds.includes(id)) ? 'sec' : 'lo'
     }
     return 'lo'
   }
 
   const compState = (compId: string): NodeState => {
     if (!active) return 'normal'
-    if (active.kind === 'component') return active.componentId === compId ? 'hi' : 'lo'
-    if (active.kind === 'trigger')   return active.componentId === compId ? 'sec' : 'lo'
+    if (active.kind === 'component')     return active.componentId === compId ? 'hi' : 'lo'
+    if (active.kind === 'trigger-group') return groupCompIds(active.triggerType).includes(compId) ? 'sec' : 'lo'
     if (active.kind === 'resource') {
       const comp = components.find(c => c.id === compId)
       const uses = active.resKind === 'kv'
@@ -668,13 +691,21 @@ function TopologyGraph({
   const resourceState = (resKind: 'kv' | 'sqlite', resName: string): NodeState => {
     if (!active) return 'normal'
     if (active.kind === 'resource') return active.resKind === resKind && active.resName === resName ? 'hi' : 'lo'
-    if (active.kind === 'component' || active.kind === 'trigger') {
-      const compId = active.componentId
-      const comp = components.find(c => c.id === compId)
+    if (active.kind === 'component') {
+      const comp = components.find(c => c.id === active.componentId)
       const uses = resKind === 'kv'
         ? (comp?.keyValueStores ?? []).includes(resName)
         : (comp?.sqliteDatabases ?? []).includes(resName)
       return uses ? 'sec' : 'lo'
+    }
+    if (active.kind === 'trigger-group') {
+      const compIds = groupCompIds(active.triggerType)
+      return compIds.some(id => {
+        const comp = components.find(c => c.id === id)
+        return resKind === 'kv'
+          ? (comp?.keyValueStores ?? []).includes(resName)
+          : (comp?.sqliteDatabases ?? []).includes(resName)
+      }) ? 'sec' : 'lo'
     }
     return 'lo'
   }
@@ -682,25 +713,40 @@ function TopologyGraph({
   const varState = (varName: string): NodeState => {
     if (!active) return 'normal'
     if (active.kind === 'variable') return active.varName === varName ? 'hi' : 'lo'
-    if (active.kind === 'component' || active.kind === 'trigger') {
+    if (active.kind === 'component') {
       const comp = components.find(c => c.id === active.componentId)
       return comp && componentUsesVar(comp, varName) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'trigger-group') {
+      const compIds = groupCompIds(active.triggerType)
+      return compIds.some(id => {
+        const comp = components.find(c => c.id === id)
+        return comp && componentUsesVar(comp, varName)
+      }) ? 'sec' : 'lo'
     }
     return 'lo'
   }
 
   // ── Precompute edges ──────────────────────────────────────────────────────
 
-  const triggerEdges = sortedTriggers.map((t, ti) => {
-    const ci = components.findIndex(c => c.id === t.component)
-    if (ci < 0) return null
-    const on = triggerEdgeActive(t.component, ti)
-    return {
-      t, ti, ci, on,
-      x1: PADDING,          y1: nodeY(tOff, ti) + NODE_H / 2,
-      x2: COMP_X + PADDING, y2: nodeY(cOff, ci) + NODE_H / 2,
-    }
-  }).filter(Boolean) as { t: TriggerInfo; ti: number; ci: number; on: boolean; x1: number; y1: number; x2: number; y2: number }[]
+  // One edge per individual trigger, but the source x1/y1 now comes from the
+  // group node position.  Each edge also carries a label (route / channel).
+  const triggerEdges = triggerGroups.flatMap((group, gi) =>
+    group.triggers.map(t => {
+      const ci = components.findIndex(c => c.id === t.component)
+      if (ci < 0) return null
+      const on = triggerEdgeActive(group.type, t.component)
+      // Label: route for HTTP/private, channel for Redis/MQTT, etc.
+      const label = t.private
+        ? 'private'
+        : (t.route ?? t.channel ?? t.address ?? '').replace(/^\//, '/').slice(0, 22) || ''
+      return {
+        t, gi, ci, on, label,
+        x1: PADDING,          y1: nodeY(tOff, gi) + NODE_H / 2,
+        x2: COMP_X + PADDING, y2: nodeY(cOff, ci) + NODE_H / 2,
+      }
+    }).filter(Boolean)
+  ) as { t: TriggerInfo; gi: number; ci: number; on: boolean; label: string; x1: number; y1: number; x2: number; y2: number }[]
 
   const resourceEdges: { x1: number; y1: number; x2: number; y2: number; shared: boolean; on: boolean }[] = []
   components.forEach((c, ci) => {
@@ -790,54 +836,75 @@ function TopologyGraph({
           ))}
         </svg>
 
-        {/* Trigger nodes */}
-        {sortedTriggers.map((t, ti) => {
-          const isPrivate = !!t.private
-          const meta  = isPrivate ? { icon: Lock, label: 'Private', color: 'gray' as const } : getTriggerMeta(t.type)
-          const TIcon = meta.icon
-          const state = triggerState(t.component, ti)
-          const route = t.route ?? t.channel ?? ''
+        {/* Trigger group nodes — one per type */}
+        {triggerGroups.map((group, gi) => {
+          const meta   = getTriggerMeta(group.type)
+          const TIcon  = meta.icon
+          const state  = triggerGroupState(group.type)
+          const colors = TRIGGER_NODE_COLORS[meta.color]
+          const iconBg = state === 'hi' ? colors.iconBgHi : colors.iconBgDef
 
-          const colors   = TRIGGER_NODE_COLORS[meta.color]
-          const hiCls    = colors.hi
-          const secCls   = colors.sec
-          const defCls   = colors.def
-          const iconBg   = state === 'hi' ? colors.iconBgHi : colors.iconBgDef
-          const iconColor  = colors.iconColor
-          const labelColor = colors.labelColor
+          // Sub-label: single route when there's only one trigger, otherwise count.
+          const singleT = group.triggers.length === 1 ? group.triggers[0] : null
+          const subLabel = singleT
+            ? (singleT.private ? 'private' : (singleT.route ?? singleT.channel ?? singleT.address ?? '—'))
+            : `${group.triggers.length} routes`
 
           return (
-            <div key={`t-${ti}`}
+            <div key={`tg-${gi}`}
               className={`absolute flex items-center rounded-xl overflow-hidden cursor-pointer transition-all ${
-                state === 'hi' ? hiCls : state === 'sec' ? secCls : defCls
+                state === 'hi' ? colors.hi : state === 'sec' ? colors.sec : colors.def
               }`}
               style={{
-                left: PADDING, top: nodeY(tOff, ti), width: NODE_W, height: NODE_H,
+                left: PADDING, top: nodeY(tOff, gi), width: NODE_W, height: NODE_H,
                 opacity: state === 'lo' ? 0.35 : 1,
                 transition: 'opacity 0.15s, box-shadow 0.15s',
               }}
               onClick={() => onSelect(
-                selected?.kind === 'trigger' && selected.componentId === t.component && selected.triggerIdx === ti
+                selected?.kind === 'trigger-group' && selected.triggerType === group.type
                   ? null
-                  : { kind: 'trigger', componentId: t.component, triggerIdx: ti }
+                  : { kind: 'trigger-group', triggerType: group.type }
               )}
-              onMouseEnter={() => setHovered({ kind: 'trigger', componentId: t.component, triggerIdx: ti })}
+              onMouseEnter={() => setHovered({ kind: 'trigger-group', triggerType: group.type })}
               onMouseLeave={() => setHovered(null)}
             >
               <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${iconBg}`}>
-                <TIcon className={`w-4 h-4 ${iconColor}`} />
+                <TIcon className={`w-4 h-4 ${colors.iconColor}`} />
               </div>
-              <div className="px-3 min-w-0">
-                <div className={`text-xs font-bold uppercase tracking-wide ${labelColor}`}>
+              <div className="px-3 min-w-0 flex-1">
+                <div className={`text-xs font-bold uppercase tracking-wide flex items-center gap-1.5 ${colors.labelColor}`}>
                   {meta.label}
+                  {group.triggers.length > 1 && (
+                    <span className="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-black/10 tabular-nums">
+                      ×{group.triggers.length}
+                    </span>
+                  )}
                 </div>
-                <div className="text-xs text-gray-500 font-mono truncate" title={isPrivate ? 'Internal only' : route}>
-                  {isPrivate ? 'internal only' : (route || '—')}
+                <div className="text-xs text-gray-400 font-mono truncate" title={subLabel}>
+                  {subLabel}
                 </div>
               </div>
             </div>
           )
         })}
+
+        {/* Edge labels — small route/channel pills just before the target component */}
+        {triggerEdges.filter(e => e.label).map((e, i) => (
+          <div key={`el-${i}`}
+            className="absolute pointer-events-none transition-opacity"
+            style={{
+              // Right-align just before the component column.
+              right: svgW - (COMP_X + PADDING) + 6,
+              top:   e.y2 - 8,
+              opacity: e.on ? 1 : (!active ? 0.55 : 0.15),
+              transition: 'opacity 0.15s',
+            }}
+          >
+            <span className="text-[9px] font-mono bg-white border border-gray-200 px-1 py-0.5 rounded text-gray-500 whitespace-nowrap shadow-sm">
+              {e.label}
+            </span>
+          </div>
+        ))}
 
         {/* Component nodes */}
         {components.map((c, ci) => {
@@ -1094,8 +1161,9 @@ export default function AppOverview() {
   const components = app?.components ?? []
   const triggers   = app?.triggers   ?? []
 
-  // Resolve selected component object for the detail pane
-  const selectedComponent = selected
+  // Resolve selected component object for the detail pane.
+  // Trigger-group selections highlight components but don't open the pane.
+  const selectedComponent = selected?.kind === 'component'
     ? components.find(c => c.id === selected.componentId) ?? null
     : null
 
