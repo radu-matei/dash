@@ -52,13 +52,28 @@ export interface TriggerInfo {
   component: string
 }
 
+export interface FileMount {
+  source: string
+  destination?: string
+}
+
+export interface BuildInfo {
+  command?: string
+  workdir?: string
+  watch?: string[]
+}
+
 export interface ComponentInfo {
   id: string
   source: string
+  sourceDigest?: string
+  sourceSize?: number
   allowedOutboundHosts?: string[]
   keyValueStores?: string[]
   sqliteDatabases?: string[]
   variables?: Record<string, string>
+  files?: FileMount[]
+  build?: BuildInfo
   triggers?: TriggerInfo[]
 }
 

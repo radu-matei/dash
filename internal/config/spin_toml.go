@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -29,14 +30,31 @@ type TriggerInfo struct {
 	Component string `json:"component"`
 }
 
+// FileMount represents one entry in a component's files array.
+type FileMount struct {
+	Source      string `json:"source"`
+	Destination string `json:"destination,omitempty"`
+}
+
+// BuildInfo holds the optional [component.id.build] section.
+type BuildInfo struct {
+	Command string   `json:"command,omitempty"`
+	Workdir string   `json:"workdir,omitempty"`
+	Watch   []string `json:"watch,omitempty"`
+}
+
 // ComponentInfo is a normalised component entry.
 type ComponentInfo struct {
 	ID                   string            `json:"id"`
 	Source               string            `json:"source"`
+	SourceDigest         string            `json:"sourceDigest,omitempty"` // sha256:... for remote URL sources
+	SourceSize           int64             `json:"sourceSize,omitempty"`   // bytes, 0 for remote URLs
 	AllowedOutboundHosts []string          `json:"allowedOutboundHosts,omitempty"`
 	KeyValueStores       []string          `json:"keyValueStores,omitempty"`
 	SQLiteDatabases      []string          `json:"sqliteDatabases,omitempty"`
 	Variables            map[string]string `json:"variables,omitempty"`
+	Files                []FileMount       `json:"files,omitempty"`
+	Build                *BuildInfo        `json:"build,omitempty"`
 	Triggers             []TriggerInfo     `json:"triggers,omitempty"`
 }
 
@@ -84,6 +102,21 @@ func Load(dir string) (*AppConfig, error) {
 	}
 
 	sort.Slice(components, func(i, j int) bool { return components[i].ID < components[j].ID })
+
+	// Stat local source files for size; skip remote URLs.
+	for i := range components {
+		src := components[i].Source
+		if src == "" || strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			continue
+		}
+		p := src
+		if !filepath.IsAbs(src) {
+			p = filepath.Join(dir, src)
+		}
+		if info, statErr := os.Stat(p); statErr == nil {
+			components[i].SourceSize = info.Size()
+		}
+	}
 
 	return &AppConfig{
 		Name:        appName,
@@ -206,12 +239,14 @@ func decodeSpinTOML(path string) (
 func extractComponent(id string, dm map[string]interface{}, trigsByComponent map[string][]TriggerInfo) ComponentInfo {
 	// source may be a string or a map { url = "...", digest = "..." }
 	source := ""
+	sourceDigest := ""
 	if s, ok := dm["source"]; ok {
 		switch sv := s.(type) {
 		case string:
 			source = sv
 		case map[string]interface{}:
 			source = strVal(sv["url"])
+			sourceDigest = strVal(sv["digest"])
 		}
 	}
 
@@ -222,13 +257,40 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 		}
 	}
 
+	// files: array of strings or {source, destination} maps
+	var files []FileMount
+	for _, f := range toSlice(dm["files"]) {
+		switch fv := f.(type) {
+		case string:
+			files = append(files, FileMount{Source: fv})
+		case map[string]interface{}:
+			files = append(files, FileMount{
+				Source:      strVal(fv["source"]),
+				Destination: strVal(fv["destination"]),
+			})
+		}
+	}
+
+	// [component.id.build]
+	var build *BuildInfo
+	if bm := toMap(dm["build"]); bm != nil {
+		build = &BuildInfo{
+			Command: strVal(bm["command"]),
+			Workdir: strVal(bm["workdir"]),
+			Watch:   toStringSlice(bm["watch"]),
+		}
+	}
+
 	return ComponentInfo{
 		ID:                   id,
 		Source:               source,
+		SourceDigest:         sourceDigest,
 		AllowedOutboundHosts: toStringSlice(dm["allowed_outbound_hosts"]),
 		KeyValueStores:       toStringSlice(dm["key_value_stores"]),
 		SQLiteDatabases:      toStringSlice(dm["sqlite_databases"]),
 		Variables:            vars,
+		Files:                files,
+		Build:                build,
 		Triggers:             trigsByComponent[id],
 	}
 }
