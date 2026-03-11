@@ -99,7 +99,7 @@ jobs:
 
       - name: Merge manifests
         run: |
-          spin pluginify --merge --release-url-base https://github.com/spinframework/dash/releases/download/${{ env.RELEASE_VERSION }}/ >${{ env.PROGRAM_NAME }}.json
+          spin pluginify --merge --release-url-base https://github.com/radu-matei/dash/releases/download/${{ env.RELEASE_VERSION }}/ >${{ env.PROGRAM_NAME }}.json
 
       - name: Display merged manifest
         run: cat ${{ env.PROGRAM_NAME }}.json
