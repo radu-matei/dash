@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PLUGIN_NAME: dashboard
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Build matrix: cross-compile for all 5 targets
+  # ──────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            pluginify_os: linux
+            pluginify_arch: amd64
+          - goos: linux
+            goarch: arm64
+            pluginify_os: linux
+            pluginify_arch: aarch64
+          - goos: windows
+            goarch: amd64
+            pluginify_os: windows
+            pluginify_arch: amd64
+            binary_suffix: .exe
+          - goos: darwin
+            goarch: amd64
+            pluginify_os: macos
+            pluginify_arch: amd64
+          - goos: darwin
+            goarch: arm64
+            pluginify_os: macos
+            pluginify_arch: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build UI
+        run: |
+          cd ui
+          npm ci
+          npm run build
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+            -o ${{ env.PLUGIN_NAME }}${{ matrix.binary_suffix }} \
+            .
+
+      - name: Install spin-pluginify
+        run: |
+          curl -fsSL https://github.com/fermyon/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
+          chmod +x spin-pluginify
+
+      - name: Package plugin
+        run: |
+          ./spin-pluginify \
+            --arch ${{ matrix.pluginify_arch }} \
+            --os ${{ matrix.pluginify_os }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            ${{ env.PLUGIN_NAME }}*.tar.gz
+            ${{ env.PLUGIN_NAME }}-${{ matrix.pluginify_os }}-${{ matrix.pluginify_arch }}.json
+
+  # ──────────────────────────────────────────────
+  # Package: merge manifests and publish a release
+  # Only runs on push (not PRs)
+  # ──────────────────────────────────────────────
+  package:
+    name: Publish Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Install spin-pluginify
+        run: |
+          curl -fsSL https://github.com/fermyon/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
+          chmod +x spin-pluginify
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=canary" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge plugin manifests
+        run: |
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}"
+          ./spin-pluginify \
+            --merge \
+            --release-url-base "${RELEASE_URL}/" \
+            > ${{ env.PLUGIN_NAME }}.json
+          cat ${{ env.PLUGIN_NAME }}.json
+
+      - name: Delete existing canary release (if applicable)
+        if: steps.tag.outputs.tag == 'canary'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete canary --yes --cleanup-tag || true
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create \
+            "${{ steps.tag.outputs.tag }}" \
+            --title "${{ steps.tag.outputs.tag }}" \
+            --prerelease=${{ steps.tag.outputs.prerelease }} \
+            ${{ steps.tag.outputs.tag == 'canary' && '--notes "Canary build from the latest commit on main."' || '' }} \
+            artifacts/*.tar.gz \
+            ${{ env.PLUGIN_NAME }}.json

@@ -1,0 +1,23 @@
+# Build output
+dashboard
+dashboard.exe
+dashboard.json
+*.tar.gz
+
+# Go
+/vendor/
+
+# Node / UI
+ui/node_modules/
+ui/dist/
+
+# Embedded UI dist (generated)
+internal/server/ui/dist/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
