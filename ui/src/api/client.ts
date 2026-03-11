@@ -231,3 +231,6 @@ export const removeBinding = (componentId: string, type: 'kv' | 'sqlite', storeN
 /** Restart the Spin child process without touching spin.toml. */
 export const restartSpin = () => post<MutationResult>('/api/restart', {})
 
+/** Run `spin build` (streaming to the Logs tab) then restart the Spin process. */
+export const buildAndRestart = () => post<MutationResult>('/api/build-restart', {})
+

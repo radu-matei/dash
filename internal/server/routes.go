@@ -244,59 +244,7 @@ func addComponentHandler(opts *Options, cfgMu *sync.RWMutex) http.HandlerFunc {
 
 		// Run `spin build` in the background, streaming output to the log hub,
 		// then restart `spin up` so the new component is live.
-		go func() {
-			opts.Hub.Publish("system", fmt.Sprintf("▶  Building after spin add %q…", req.Name))
-
-			buildCmd := exec.Command(opts.SpinBin, "build")
-			buildCmd.Dir = opts.Dir
-			buildCmd.Env = append(os.Environ(), "NO_COLOR=1")
-
-			stdoutPipe, _ := buildCmd.StdoutPipe()
-			stderrPipe, _ := buildCmd.StderrPipe()
-
-			if startErr := buildCmd.Start(); startErr != nil {
-				opts.Hub.Publish("system", "▶  spin build failed to start: "+startErr.Error())
-				return
-			}
-
-			streamToHub := func(pipe interface{ Read([]byte) (int, error) }, stream string) {
-				buf := make([]byte, 4096)
-				var pending string
-				for {
-					n, readErr := pipe.Read(buf)
-					if n > 0 {
-						pending += string(buf[:n])
-						for {
-							idx := strings.IndexByte(pending, '\n')
-							if idx < 0 {
-								break
-							}
-							opts.Hub.Publish(stream, strings.TrimRight(pending[:idx], "\r"))
-							pending = pending[idx+1:]
-						}
-					}
-					if readErr != nil {
-						if pending != "" {
-							opts.Hub.Publish(stream, strings.TrimRight(pending, "\r"))
-						}
-						return
-					}
-				}
-			}
-
-			go streamToHub(stdoutPipe, "stdout")
-			go streamToHub(stderrPipe, "stderr")
-
-			if waitErr := buildCmd.Wait(); waitErr != nil {
-				opts.Hub.Publish("system", fmt.Sprintf("▶  spin build failed: %v — fix errors and click Restart.", waitErr))
-				return
-			}
-
-			opts.Hub.Publish("system", "▶  spin build succeeded — restarting Spin…")
-			if restartErr := opts.Runner.Restart(); restartErr != nil {
-				opts.Hub.Publish("system", "▶  restart failed: "+restartErr.Error())
-			}
-		}()
+		go runBuildAndRestart(opts, fmt.Sprintf("▶  Building after spin add %q…", req.Name))
 
 		jsonOK(w, map[string]string{
 			"message": fmt.Sprintf(
@@ -440,6 +388,76 @@ func restartHandler(runner *process.Runner) http.HandlerFunc {
 		}
 		go func() { _ = runner.Restart() }()
 		jsonOK(w, map[string]string{"message": "Spin is restarting."})
+	}
+}
+
+// buildAndRestartHandler runs `spin build` (streaming output to the log hub)
+// and, on success, restarts the Spin process.
+func buildAndRestartHandler(opts *Options) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			jsonErr(w, http.StatusMethodNotAllowed, "POST required")
+			return
+		}
+		go runBuildAndRestart(opts, "▶  Building…")
+		jsonOK(w, map[string]string{"message": "Building — watch the Logs tab for progress."})
+	}
+}
+
+// runBuildAndRestart executes `spin build` synchronously (streaming lines to
+// the SSE hub) and, on success, restarts the Spin process. It is intended to
+// be called inside a goroutine so callers remain non-blocking.
+func runBuildAndRestart(opts *Options, label string) {
+	opts.Hub.Publish("system", label)
+
+	buildCmd := exec.Command(opts.SpinBin, "build")
+	buildCmd.Dir = opts.Dir
+	buildCmd.Env = append(os.Environ(), "NO_COLOR=1")
+
+	stdoutPipe, _ := buildCmd.StdoutPipe()
+	stderrPipe, _ := buildCmd.StderrPipe()
+
+	if startErr := buildCmd.Start(); startErr != nil {
+		opts.Hub.Publish("system", "▶  spin build failed to start: "+startErr.Error())
+		return
+	}
+
+	streamToHub := func(pipe interface{ Read([]byte) (int, error) }, stream string) {
+		buf := make([]byte, 4096)
+		var pending string
+		for {
+			n, readErr := pipe.Read(buf)
+			if n > 0 {
+				pending += string(buf[:n])
+				for {
+					idx := strings.IndexByte(pending, '\n')
+					if idx < 0 {
+						break
+					}
+					opts.Hub.Publish(stream, strings.TrimRight(pending[:idx], "\r"))
+					pending = pending[idx+1:]
+				}
+			}
+			if readErr != nil {
+				if pending != "" {
+					opts.Hub.Publish(stream, strings.TrimRight(pending, "\r"))
+				}
+				return
+			}
+		}
+	}
+
+	go streamToHub(stdoutPipe, "stdout")
+	go streamToHub(stderrPipe, "stderr")
+
+	if waitErr := buildCmd.Wait(); waitErr != nil {
+		opts.Hub.Publish("system", fmt.Sprintf("▶  spin build failed: %v — fix errors and click Restart.", waitErr))
+		return
+	}
+
+	opts.Hub.Publish("system", "▶  spin build succeeded — restarting Spin…")
+	if restartErr := opts.Runner.Restart(); restartErr != nil {
+		opts.Hub.Publish("system", "▶  restart failed: "+restartErr.Error())
 	}
 }
 

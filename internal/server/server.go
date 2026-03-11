@@ -72,6 +72,7 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/add-component-variable", mutationGuard(addComponentVariableHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/remove-binding", mutationGuard(removeBindingHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/restart", restartHandler(opts.Runner))
+	mux.HandleFunc("/api/build-restart", buildAndRestartHandler(&opts))
 
 	// --- SPA static file handler ---
 	distFS, err := fs.Sub(embeddedUI, "ui/dist")

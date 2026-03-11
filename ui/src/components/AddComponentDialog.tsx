@@ -352,6 +352,19 @@ export default function AddComponentDialog({ onClose, onSuccess }: Props) {
             </div>
           )}
 
+          {/* Hub link */}
+          <p className="text-xs text-gray-400">
+            Looking for more templates?{' '}
+            <a
+              href="https://spinframework.dev/hub"
+              target="_blank"
+              rel="noreferrer"
+              className="text-blue-500 hover:underline"
+            >
+              Explore the Spin Hub ↗
+            </a>
+          </p>
+
           {/* Actions */}
           <div className="flex justify-end gap-2 pt-1">
             <button type="button" className="btn-secondary" onClick={onClose}>

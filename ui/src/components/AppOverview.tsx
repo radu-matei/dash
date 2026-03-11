@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Clock,
   Code2,
@@ -29,7 +30,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { Icon } from '@iconify/react'
-import { type ComponentInfo, type TriggerInfo, type VarEntry, getVars, removeBinding, restartSpin } from '../api/client'
+import { type ComponentInfo, type TriggerInfo, type VarEntry, buildAndRestart, getVars, removeBinding, restartSpin } from '../api/client'
 import { useAppStore } from '../store/appContext'
 import AddComponentDialog from './AddComponentDialog'
 import AddBindingDialog from './AddBindingDialog'
@@ -1484,7 +1485,11 @@ export default function AppOverview() {
   const [showAddBinding, setShowAddBinding] = useState(false)
   const [showAddVar, setShowAddVar]         = useState(false)
   const [showEditToml, setShowEditToml]     = useState(false)
-  const [restarting, setRestarting]         = useState(false)
+  const [restarting, setRestarting]           = useState(false)
+  const [restartMenuOpen, setRestartMenuOpen] = useState(false)
+  const [addMenuOpen, setAddMenuOpen]         = useState(false)
+  const restartMenuRef = useRef<HTMLDivElement>(null)
+  const addMenuRef     = useRef<HTMLDivElement>(null)
 
   // Shared pane width — remembered across all pane types and open/close cycles.
   const [paneWidth, setPaneWidth] = useState(384)
@@ -1494,6 +1499,30 @@ export default function AppOverview() {
   useEffect(() => {
     getVars().then(v => setVars(v ?? [])).catch(() => {})
   }, [app])
+
+  // Close the restart dropdown when the user clicks outside it.
+  useEffect(() => {
+    if (!restartMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (restartMenuRef.current && !restartMenuRef.current.contains(e.target as Node)) {
+        setRestartMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [restartMenuOpen])
+
+  // Close the add dropdown when the user clicks outside it.
+  useEffect(() => {
+    if (!addMenuOpen) return
+    const handler = (e: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) {
+        setAddMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [addMenuOpen])
 
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
@@ -1545,43 +1574,91 @@ export default function AppOverview() {
               Read-only — pass <code className="font-mono">--allow-edits</code> to edit
             </span>
           )}
-          <button
-            className="btn-secondary text-xs"
-            onClick={() => setShowAddComp(true)}
-            disabled={!canMutate}
-            title={canMutate ? 'Add a new component via spin add' : 'Requires --allow-edits'}
-          >
-            <Package className="w-3.5 h-3.5" /> Add Component
-          </button>
-          <button
-            className="btn-secondary text-xs"
-            onClick={() => setShowAddVar(true)}
-            disabled={!canMutate}
-            title={canMutate ? 'Add a new application variable' : 'Requires --allow-edits'}
-          >
-            <Settings className="w-3.5 h-3.5" /> Add Variable
-          </button>
-          <button
-            className="btn-secondary text-xs"
-            onClick={() => setShowAddBinding(true)}
-            disabled={!canMutate || components.length === 0}
-            title={canMutate ? 'Add a KV or SQLite binding to a component' : 'Requires --allow-edits'}
-          >
-            <Plus className="w-3.5 h-3.5" /> Add Binding
-          </button>
-          <button
-            className="btn-secondary text-xs"
-            disabled={restarting}
-            onClick={async () => {
-              setRestarting(true)
-              try { await restartSpin() } catch { /* ignore */ }
-              setTimeout(() => { setRestarting(false); refresh() }, 2000)
-            }}
-            title="Restart the Spin process"
-          >
-            <RotateCcw className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`} />
-            {restarting ? 'Restarting…' : 'Restart'}
-          </button>
+          {/* Add dropdown menu */}
+          <div className="relative" ref={addMenuRef}>
+            <button
+              className="btn-secondary text-xs"
+              disabled={!canMutate}
+              onClick={() => setAddMenuOpen(o => !o)}
+              title={canMutate ? 'Add a component, variable, or binding' : 'Requires --allow-edits'}
+              aria-haspopup="true"
+              aria-expanded={addMenuOpen}
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add
+              <ChevronDown className="w-3 h-3 ml-0.5" />
+            </button>
+            {addMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+                <button
+                  className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50"
+                  onClick={() => { setAddMenuOpen(false); setShowAddComp(true) }}
+                >
+                  <Package className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                  Component
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50"
+                  onClick={() => { setAddMenuOpen(false); setShowAddVar(true) }}
+                >
+                  <Settings className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                  Variable
+                </button>
+                <button
+                  className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                  disabled={components.length === 0}
+                  title={components.length === 0 ? 'Add a component first' : undefined}
+                  onClick={() => { setAddMenuOpen(false); setShowAddBinding(true) }}
+                >
+                  <Plus className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                  Binding
+                </button>
+              </div>
+            )}
+          </div>
+          {/* Split restart button: main = restart, chevron = build & restart */}
+          <div className="relative flex" ref={restartMenuRef}>
+            <button
+              className="btn-secondary text-xs rounded-r-none border-r border-r-gray-300"
+              disabled={restarting}
+              onClick={async () => {
+                setRestarting(true)
+                try { await restartSpin() } catch { /* ignore */ }
+                setTimeout(() => { setRestarting(false); refresh() }, 2000)
+              }}
+              title="Restart the Spin process"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`} />
+              {restarting ? 'Restarting…' : 'Restart'}
+            </button>
+            <button
+              className="btn-secondary text-xs rounded-l-none px-1.5"
+              disabled={restarting}
+              onClick={() => setRestartMenuOpen(o => !o)}
+              title="More restart options"
+              aria-haspopup="true"
+              aria-expanded={restartMenuOpen}
+            >
+              <ChevronDown className="w-3 h-3" />
+            </button>
+            {restartMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1">
+                <button
+                  className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-gray-50 disabled:opacity-50"
+                  disabled={restarting}
+                  onClick={async () => {
+                    setRestartMenuOpen(false)
+                    setRestarting(true)
+                    try { await buildAndRestart() } catch { /* ignore */ }
+                    setTimeout(() => { setRestarting(false); refresh() }, 2000)
+                  }}
+                >
+                  <Hammer className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                  Build &amp; Restart
+                </button>
+              </div>
+            )}
+          </div>
 
         </div>
       </div>
