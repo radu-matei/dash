@@ -4,7 +4,6 @@ import {
   ExternalLink,
   LayoutDashboard,
   ScrollText,
-  Settings,
   TrendingUp,
 } from 'lucide-react'
 import { useAppStore } from '../store/appContext'
@@ -35,12 +34,6 @@ const NAV_SECTIONS = [
       { to: '/logs',    label: 'Logs',      Icon: ScrollText },
       { to: '/traces',  label: 'Traces',    Icon: Activity },
       { to: '/metrics', label: 'Metrics',   Icon: TrendingUp },
-    ],
-  },
-  {
-    label: 'Configuration',
-    items: [
-      { to: '/vars', label: 'Variables', Icon: Settings },
     ],
   },
 ]

@@ -87,6 +87,7 @@
   .badge-red     { @apply badge bg-red-100 text-red-800; }
   .badge-gray    { @apply badge bg-gray-100 text-gray-700; }
   .badge-purple  { @apply badge bg-purple-100 text-purple-800; }
+  .badge-teal     { @apply badge bg-teal-100 text-teal-800; }
   .badge-seagreen { @apply badge bg-spin-seagreen/20 text-spin-oxfordblue; }
 
   /* ── Tables ─────────────────────────────────────── */

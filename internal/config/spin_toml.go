@@ -15,10 +15,12 @@ import (
 
 // VarEntry represents a single resolved variable with its source.
 type VarEntry struct {
-	Key    string `json:"key"`
-	Value  string `json:"value"`
-	Source string `json:"source"` // "spin.toml" | ".env"
-	Secret bool   `json:"secret"` // true when declared secret = true in spin.toml
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+	Source   string `json:"source"`   // "spin.toml" | ".env"
+	Secret   bool   `json:"secret"`   // true when declared secret = true in spin.toml
+	Declared bool   `json:"declared"` // true only when the variable is declared in [variables]
+	                                  // false for entries synthesised from component bindings
 }
 
 // TriggerInfo is a normalised trigger entry.
@@ -28,20 +30,14 @@ type TriggerInfo struct {
 	Channel   string `json:"channel,omitempty"`
 	Address   string `json:"address,omitempty"`
 	Component string `json:"component"`
+	// Private is true when the trigger uses route = { private = true }.
+	// Such components have no public HTTP endpoint and are reachable only
+	// via local service chaining from within the same Spin application.
+	Private bool `json:"private,omitempty"`
 }
 
-// FileMount represents one entry in a component's files array.
-type FileMount struct {
-	Source      string `json:"source"`
-	Destination string `json:"destination,omitempty"`
-}
-
-// BuildInfo holds the optional [component.id.build] section.
-type BuildInfo struct {
-	Command string   `json:"command,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
-	Watch   []string `json:"watch,omitempty"`
-}
+// FileMount and BuildConfig (previously BuildInfo) are now defined in
+// manifest.go as part of the full manifest type reference.
 
 // ComponentInfo is a normalised component entry.
 type ComponentInfo struct {
@@ -57,12 +53,14 @@ type ComponentInfo struct {
 	Variables            map[string]string `json:"variables,omitempty"`
 	Environment          map[string]string `json:"environment,omitempty"`
 	Files                []FileMount       `json:"files,omitempty"`
-	Build                *BuildInfo        `json:"build,omitempty"`
+	Build                *BuildConfig      `json:"build,omitempty"`
 	Triggers             []TriggerInfo     `json:"triggers,omitempty"`
 }
 
 // AppConfig holds the full parsed Spin application metadata.
 type AppConfig struct {
+	// Dir is the directory containing spin.toml. Set by Load().
+	Dir         string
 	Name        string
 	Description string
 	Variables   []VarEntry
@@ -71,6 +69,52 @@ type AppConfig struct {
 	// ListenAddr is the URL where the Spin app is reachable (derived from --listen).
 	// Empty when no --listen flag was provided.
 	ListenAddr string
+}
+
+// ApplyOverrides overlays a map of key→value pairs into cfg.Variables, tagging
+// each updated (or newly added) entry with the given source label.
+// This is the same logic as the private applyVarOverride in cmd/root.go, but
+// exported so the server mutation handlers can re-apply overrides after reload.
+func ApplyOverrides(cfg *AppConfig, overrides map[string]string, source string) {
+	for k, v := range overrides {
+		applied := false
+		for i := range cfg.Variables {
+			if cfg.Variables[i].Key == k {
+				cfg.Variables[i].Value = v
+				cfg.Variables[i].Source = source
+				applied = true
+				break
+			}
+		}
+		if !applied {
+			cfg.Variables = append(cfg.Variables, VarEntry{
+				Key:    k,
+				Value:  v,
+				Source: source,
+			})
+		}
+	}
+}
+
+// Reload re-parses spin.toml from cfg.Dir and replaces all mutable fields
+// in-place. It then re-applies the provided env and CLI variable overrides so
+// the in-memory state stays consistent with what is on disk.
+// ListenAddr is preserved (it is set by the process watcher, not the file).
+func (cfg *AppConfig) Reload(envOverrides, cliOverrides map[string]string) error {
+	fresh, err := Load(cfg.Dir)
+	if err != nil {
+		return err
+	}
+	ApplyOverrides(fresh, envOverrides, "SPIN_VARIABLE")
+	ApplyOverrides(fresh, cliOverrides, "--variable")
+
+	cfg.Name = fresh.Name
+	cfg.Description = fresh.Description
+	cfg.Variables = fresh.Variables
+	cfg.Components = fresh.Components
+	cfg.Triggers = fresh.Triggers
+	// cfg.ListenAddr intentionally not overwritten
+	return nil
 }
 
 // ─── Load ─────────────────────────────────────────────────────────────────────
@@ -143,6 +187,7 @@ func Load(dir string) (*AppConfig, error) {
 	}
 
 	return &AppConfig{
+		Dir:         dir,
 		Name:        appName,
 		Description: appDesc,
 		Variables:   vars,
@@ -199,17 +244,30 @@ func decodeSpinTOML(path string) (
 	if trigRaw, ok := raw["trigger"]; ok {
 		if trigMap := toMap(trigRaw); trigMap != nil {
 			for trigType, entries := range trigMap {
-				for _, entry := range toSlice(entries) {
-					if em := toMap(entry); em != nil {
-						triggers = append(triggers, TriggerInfo{
-							Type:      trigType,
-							Route:     strVal(em["route"]),
-							Channel:   strVal(em["channel"]),
-							Address:   strVal(em["address"]),
-							Component: strVal(em["component"]),
-						})
+			for _, entry := range toSlice(entries) {
+				if em := toMap(entry); em != nil {
+					// route may be a string ("/foo/...") or a table ({ private = true }).
+					route := ""
+					private := false
+					if routeRaw, ok := em["route"]; ok {
+						if s, ok := routeRaw.(string); ok {
+							route = s
+						} else if routeMap := toMap(routeRaw); routeMap != nil {
+							if p, _ := routeMap["private"].(bool); p {
+								private = true
+							}
+						}
 					}
+					triggers = append(triggers, TriggerInfo{
+						Type:      trigType,
+						Route:     route,
+						Channel:   strVal(em["channel"]),
+						Address:   strVal(em["address"]),
+						Component: strVal(em["component"]),
+						Private:   private,
+					})
 				}
+			}
 			}
 		}
 	}
@@ -296,7 +354,7 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 	for _, f := range toSlice(dm["files"]) {
 		switch fv := f.(type) {
 		case string:
-			files = append(files, FileMount{Source: fv})
+			files = append(files, FileMount{Glob: fv})
 		case map[string]interface{}:
 			files = append(files, FileMount{
 				Source:      strVal(fv["source"]),
@@ -306,9 +364,9 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 	}
 
 	// [component.id.build]
-	var build *BuildInfo
+	var build *BuildConfig
 	if bm := toMap(dm["build"]); bm != nil {
-		build = &BuildInfo{
+		build = &BuildConfig{
 			Command: strVal(bm["command"]),
 			Workdir: strVal(bm["workdir"]),
 			Watch:   toStringSlice(bm["watch"]),
@@ -338,10 +396,11 @@ func buildVarEntries(variables map[string]map[string]interface{}) []VarEntry {
 	vars := make([]VarEntry, 0, len(variables))
 	for key, def := range variables {
 		vars = append(vars, VarEntry{
-			Key:    key,
-			Value:  strVal(def["default"]),
-			Source: "spin.toml",
-			Secret: boolVal(def["secret"]),
+			Key:      key,
+			Value:    strVal(def["default"]),
+			Source:   "spin.toml",
+			Secret:   boolVal(def["secret"]),
+			Declared: true, // came from [variables] — a true app-level declaration
 		})
 	}
 	sort.Slice(vars, func(i, j int) bool { return vars[i].Key < vars[j].Key })

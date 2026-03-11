@@ -9,6 +9,17 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return res.json()
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({ error: res.statusText }))
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? res.statusText)
+  return data as T
+}
+
 // ── Status ────────────────────────────────────────────────────────────────────
 
 export type SpinStatus = 'starting' | 'running' | 'stopped' | 'error'
@@ -28,6 +39,8 @@ export interface TriggerInfo {
   channel?: string
   address?: string
   component: string
+  /** True when route = { private = true } — internal-only, no public endpoint. */
+  private?: boolean
 }
 
 export interface FileMount {
@@ -63,7 +76,11 @@ export interface AppInfo {
   components: ComponentInfo[]
   triggers: TriggerInfo[]
   varCount: number
+  /** Keys of all variables declared in [variables] in spin.toml. */
+  variableKeys: string[]
   listenAddr?: string
+  /** True only when the dashboard was started with --allow-edits. */
+  allowMutations: boolean
 }
 
 export const getApp = (signal?: AbortSignal) => get<AppInfo>('/api/app', signal)
@@ -117,6 +134,7 @@ export interface VarEntry {
   value: string
   source: 'spin.toml' | '.env' | 'SPIN_VARIABLE' | '--variable'
   secret: boolean
+  declared: boolean
 }
 
 export const getVars = () => get<VarEntry[]>('/api/vars')
@@ -138,4 +156,78 @@ export interface MetricSeries {
 }
 
 export const getOtelMetrics = (signal?: AbortSignal) => get<Record<string, MetricSeries>>('/api/otel-metrics', signal)
+
+// ── Mutations ─────────────────────────────────────────────────────────────────
+
+export interface MutationResult {
+  message: string
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+export interface TemplateParam {
+  id: string
+  prompt: string
+  default?: string
+  pattern?: string
+  allowed_values?: string[]
+  /** True for the special "http-path" parameter — the UI shows the
+   *  route input + private-endpoint toggle instead of a plain text field. */
+  is_http_path?: boolean
+}
+
+export interface TemplateInfo {
+  id: string
+  description: string
+  parameters: TemplateParam[]
+}
+
+/** Fetch all installed Spin templates with their parameter definitions.
+ *  Returns an empty array if the templates directory cannot be found. */
+export const fetchTemplates = () => get<TemplateInfo[]>('/api/templates')
+
+/** Run `spin add -t template name --value key=value …` in the app directory.
+ *  `values` maps template parameter IDs to their values.
+ *  Pass `privateEndpoint = true` for the `http-path` parameter to generate
+ *  `route = { private = true }` instead of a public route. */
+export const addComponent = (
+  template: string,
+  name: string,
+  values: Record<string, string>,
+  privateEndpoint?: boolean,
+) =>
+  post<MutationResult>('/api/add-component', {
+    template,
+    name,
+    values,
+    ...(privateEndpoint ? { private: true } : {}),
+  })
+
+/** Add a new variable to [variables] in spin.toml and wire it to the given
+ *  components via [component.<id>.variables]. Restarts Spin on success. */
+export const addVariable = (
+  name: string,
+  defaultValue: string,
+  required: boolean,
+  secret: boolean,
+  componentIds: string[],
+) => post<MutationResult>('/api/add-variable', { name, defaultValue, required, secret, componentIds })
+
+/** Add a KV store or SQLite binding to a component in spin.toml and restart Spin. */
+export const addBinding = (
+  componentId: string,
+  type: 'kv' | 'sqlite',
+  storeName: string,
+) => post<MutationResult>('/api/add-binding', { componentId, type, storeName })
+
+/** Wire an existing [variables] entry to a component's [component.<id>.variables]. */
+export const addComponentVariable = (componentId: string, varName: string) =>
+  post<MutationResult>('/api/add-component-variable', { componentId, varName })
+
+/** Remove a KV or SQLite binding from a component in spin.toml. */
+export const removeBinding = (componentId: string, type: 'kv' | 'sqlite', storeName: string) =>
+  post<MutationResult>('/api/remove-binding', { componentId, type, storeName })
+
+/** Restart the Spin child process without touching spin.toml. */
+export const restartSpin = () => post<MutationResult>('/api/restart', {})
 

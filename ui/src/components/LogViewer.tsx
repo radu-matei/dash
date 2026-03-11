@@ -69,13 +69,21 @@ function base(
   return { id, raw, timestamp, timestampMs, level, source, message, isHttpIn, isHttpOut, httpMethod, httpPath, httpStatus, httpDuration }
 }
 
+// Word-boundary regexes prevent false positives from crate names like
+// "thiserror" (contains ERROR) or "tracing" (contains TRACE).
+const RE_ERROR = /\b(?:ERROR|FATAL|PANIC)\b/
+const RE_WARN  = /\bWARN(?:ING)?\b/
+const RE_INFO  = /\bINFO\b/
+const RE_DEBUG = /\bDEBUG\b/
+const RE_TRACE = /\bTRACE\b/
+
 function detectLevel(line: string): Level | null {
   const u = line.toUpperCase()
-  if (u.includes('ERROR') || u.includes('FATAL') || u.includes('PANIC')) return 'ERROR'
-  if (u.includes('WARN'))  return 'WARN'
-  if (u.includes(' INFO')) return 'INFO'
-  if (u.includes('DEBUG')) return 'DEBUG'
-  if (u.includes('TRACE')) return 'TRACE'
+  if (RE_ERROR.test(u)) return 'ERROR'
+  if (RE_WARN.test(u))  return 'WARN'
+  if (RE_INFO.test(u))  return 'INFO'
+  if (RE_DEBUG.test(u)) return 'DEBUG'
+  if (RE_TRACE.test(u)) return 'TRACE'
   return null
 }
 

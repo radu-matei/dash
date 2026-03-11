@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -21,9 +23,11 @@ import (
 )
 
 var (
-	port    int
-	noOpen  bool
-	otelPort int
+	port           int
+	noOpen         bool
+	otelPort       int
+	otelForwardTo  string
+	allowEdits bool
 )
 
 var rootCmd = &cobra.Command{
@@ -48,6 +52,8 @@ func init() {
 	rootCmd.Flags().IntVar(&port, "port", 3001, "port for the dashboard HTTP server")
 	rootCmd.Flags().IntVar(&otelPort, "otel-port", 4318, "port for the built-in OTLP receiver")
 	rootCmd.Flags().BoolVar(&noOpen, "no-open", false, "do not open the browser automatically")
+	rootCmd.Flags().StringVar(&otelForwardTo, "otel-forward-to", "", "forward all received OTLP data to this base URL (e.g. http://localhost:4317) for cross-app trace stitching in a shared backend")
+	rootCmd.Flags().BoolVar(&allowEdits, "allow-edits", false, "allow the dashboard to modify spin.toml (add/remove components, variables, bindings)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -69,12 +75,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Apply SPIN_VARIABLE_* environment variable overrides.
 	// Priority: spin.toml < .env < SPIN_VARIABLE_* < --variable (highest)
-	applyVarOverride(cfg, collectSpinVarEnv(), "SPIN_VARIABLE")
+	envOverrides := collectSpinVarEnv()
+	config.ApplyOverrides(cfg, envOverrides, "SPIN_VARIABLE")
 
 	// Apply --variable flag overrides and capture --listen address from the
 	// extra args that will be forwarded to 'spin up'.
-	varOverrides, listenAddr := parseSpinArgs(args)
-	applyVarOverride(cfg, varOverrides, "--variable")
+	cliOverrides, listenAddr := parseSpinArgs(args)
+	config.ApplyOverrides(cfg, cliOverrides, "--variable")
 	cfg.ListenAddr = listenAddr
 
 	fmt.Printf("▶  Spin Dashboard — app: %s\n", cfg.Name)
@@ -82,9 +89,10 @@ func run(cmd *cobra.Command, args []string) error {
 	// SSE hub for log streaming.
 	hub := server.NewHub()
 
-	// OTel receivers.
-	otelReceiver := otel.NewReceiver()
-	metricsReceiver := otel.NewMetricsReceiver(500)
+	// OTel receivers — optionally forward raw payloads to a shared upstream
+	// collector so multiple dashboard instances can stitch cross-app traces.
+	otelReceiver := otel.NewReceiver(otelForwardTo)
+	metricsReceiver := otel.NewMetricsReceiver(500, otelForwardTo)
 
 	// Locate the spin binary.
 	spinBin := os.Getenv("SPIN_BIN_PATH")
@@ -104,13 +112,22 @@ func run(cmd *cobra.Command, args []string) error {
 	runner := process.New(spinBin, append([]string{"up"}, args...), extraEnv, hub.Publish)
 
 	// Set up the HTTP mux.
+	if allowEdits {
+		fmt.Println("▶  Edits:      enabled (--allow-edits)")
+	}
+
 	mux, err := server.New(server.Options{
-		Port:        port,
-		Hub:         hub,
-		Runner:      runner,
-		OTel:        otelReceiver,
-		OTelMetrics: metricsReceiver,
-		Cfg:         cfg,
+		Port:           port,
+		Hub:            hub,
+		Runner:         runner,
+		OTel:           otelReceiver,
+		OTelMetrics:    metricsReceiver,
+		Cfg:            cfg,
+		Dir:            cwd,
+		SpinBin:        spinBin,
+		EnvOverrides:   envOverrides,
+		CliOverrides:   cliOverrides,
+		AllowMutations: allowEdits,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up server: %w", err)
@@ -136,7 +153,13 @@ func run(cmd *cobra.Command, args []string) error {
 	otelMux := http.NewServeMux()
 	otelMux.HandleFunc("/v1/traces", otelReceiver.HandleOTLP)
 	otelMux.HandleFunc("/v1/metrics", metricsReceiver.HandleOTLP)
-	otelMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	otelMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		if otelForwardTo != "" {
+			body, _ := io.ReadAll(r.Body)
+			go forwardOTLP(strings.TrimRight(otelForwardTo, "/")+"/v1/logs", r.Header.Get("Content-Type"), body)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 
 	otelSrv := &http.Server{Handler: otelMux}
 	go func() {
@@ -156,6 +179,9 @@ func run(cmd *cobra.Command, args []string) error {
 	dashURL := fmt.Sprintf("http://localhost:%d", port)
 	fmt.Printf("▶  Dashboard:  %s\n", dashURL)
 	fmt.Printf("▶  OTLP:       %s\n", otelEndpoint)
+	if otelForwardTo != "" {
+		fmt.Printf("▶  Forwarding: %s\n", otelForwardTo)
+	}
 	fmt.Println("▶  Press Ctrl+C to stop")
 
 	// Start spin up.
@@ -209,29 +235,6 @@ func collectSpinVarEnv() map[string]string {
 	return out
 }
 
-// applyVarOverride applies a map of key→value overrides to cfg.Variables,
-// tagging each changed (or newly added) entry with the given source label.
-func applyVarOverride(cfg *config.AppConfig, overrides map[string]string, source string) {
-	for k, v := range overrides {
-		applied := false
-		for i := range cfg.Variables {
-			if cfg.Variables[i].Key == k {
-				cfg.Variables[i].Value = v
-				cfg.Variables[i].Source = source
-				applied = true
-				break
-			}
-		}
-		if !applied {
-			cfg.Variables = append(cfg.Variables, config.VarEntry{
-				Key:    k,
-				Value:  v,
-				Source: source,
-			})
-		}
-	}
-}
-
 // parseSpinArgs scans the extra args forwarded to 'spin up' and extracts:
 //   - --variable key=value  (also -v key=value)
 //   - --listen address
@@ -262,6 +265,23 @@ func parseSpinArgs(args []string) (varOverrides map[string]string, listenAddr st
 		}
 	}
 	return
+}
+
+// forwardOTLP fires a best-effort POST of body to url.  Used for /v1/logs
+// which has no dedicated receiver struct but still needs forwarding.
+func forwardOTLP(url, contentType string, body []byte) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // normalizeListenAddr converts a spin --listen value like "0.0.0.0:3002" or

@@ -1,6 +1,7 @@
 package otel
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -43,14 +44,26 @@ type Span struct {
 
 // Receiver is a lightweight OTLP/HTTP trace receiver that accepts both
 // application/x-protobuf (Spin default) and application/json payloads.
+// If forwardTo is non-empty, every raw payload is also forwarded there
+// asynchronously so multiple dashboard instances can share a central backend
+// (e.g. Jaeger, Tempo) for cross-app distributed trace stitching.
 type Receiver struct {
-	mu    sync.RWMutex
-	spans []Span
+	mu        sync.RWMutex
+	spans     []Span
+	forwardTo string
+	client    *http.Client
 }
 
 // NewReceiver creates a new OTel trace receiver.
-func NewReceiver() *Receiver {
-	return &Receiver{}
+// forwardTo is an optional base URL (e.g. "http://localhost:4317") to forward
+// raw OTLP payloads to after storing them locally; empty string disables
+// forwarding.
+func NewReceiver(forwardTo string) *Receiver {
+	r := &Receiver{forwardTo: strings.TrimRight(forwardTo, "/")}
+	if forwardTo != "" {
+		r.client = &http.Client{Timeout: 5 * time.Second}
+	}
+	return r
 }
 
 // Spans returns a copy of all stored spans (most recent last).
@@ -79,6 +92,12 @@ func (r *Receiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 
 	ct := req.Header.Get("Content-Type")
 
+	// Forward raw payload to the upstream collector before any parsing so
+	// that even payloads we fail to decode still reach the central backend.
+	if r.forwardTo != "" {
+		go r.forward(r.forwardTo+"/v1/traces", ct, body)
+	}
+
 	var spans []Span
 	if strings.Contains(ct, "application/x-protobuf") {
 		spans, err = parseOTLPProto(body)
@@ -97,6 +116,22 @@ func (r *Receiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// forward fires a best-effort POST of body to url, preserving the original
+// Content-Type.  Errors are intentionally silenced — a slow or unavailable
+// upstream must never stall the local Spin app.
+func (r *Receiver) forward(url, contentType string, body []byte) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // parseOTLPProto decodes an OTLP ExportTraceServiceRequest protobuf payload.

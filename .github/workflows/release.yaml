@@ -9,150 +9,133 @@ on:
   workflow_dispatch:
 
 env:
-  PLUGIN_NAME: dashboard
-
+  PROGRAM_NAME: otel
+  SPIN_VERSION: v3.2.0
 jobs:
-  # ──────────────────────────────────────────────
-  # Build matrix: cross-compile for all 5 targets
-  # ──────────────────────────────────────────────
   build:
-    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    name: Build plugin binaries
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-            pluginify_os: linux
-            pluginify_arch: amd64
-          - goos: linux
-            goarch: arm64
-            pluginify_os: linux
-            pluginify_arch: aarch64
-          - goos: windows
-            goarch: amd64
-            pluginify_os: windows
-            pluginify_arch: amd64
-            binary_suffix: .exe
-          - goos: darwin
-            goarch: amd64
-            pluginify_os: macos
-            pluginify_arch: amd64
-          - goos: darwin
-            goarch: arm64
-            pluginify_os: macos
-            pluginify_arch: aarch64
-
+        config:
+          # The architectures and operating systems accepted by Golang and the Pluginify tool are different for macos + arm64
+          - {
+              goArch: "amd64",
+              goOs: "linux",
+              pluginifyArch: "amd64",
+              pluginifyOs: linux,
+            }
+          - {
+              goArch: "arm64",
+              goOs: "linux",
+              pluginifyArch: "aarch64",
+              pluginifyOs: linux,
+            }
+          - {
+              goArch: "amd64",
+              goOs: "windows",
+              pluginifyArch: "amd64",
+              pluginifyOs: windows,
+            }
+          - {
+              goArch: "arm64",
+              goOs: "darwin",
+              pluginifyArch: "amd64",
+              pluginifyOs: macos,
+            }
+          - {
+              goArch: "amd64",
+              goOs: "darwin",
+              pluginifyArch: "aarch64",
+              pluginifyOs: macos,
+            }
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: stable
 
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - name: Install Spin
+        uses: rajatjindal/setup-actions/spin@main
         with:
-          node-version: "20"
+          version: ${{ env.SPIN_VERSION }}
 
-      - name: Build UI
-        run: |
-          cd ui
-          npm ci
-          npm run build
+      - name: Install Pluginify
+        run: spin plugins install --url https://github.com/itowlson/spin-pluginify/releases/download/canary/pluginify.json --yes
 
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
-        run: |
-          go build \
-            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
-            -o ${{ env.PLUGIN_NAME }}${{ matrix.binary_suffix }} \
-            .
+      - name: Build Plugin Binary
+        run: GOOS=${{ matrix.config.goOs }} GOARCH=${{ matrix.config.goArch }} go build -o ${{ env.PROGRAM_NAME }} main.go
 
-      - name: Install spin-pluginify
-        run: |
-          curl -fsSL https://github.com/itowlson/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
-          chmod +x spin-pluginify
+      - name: Create Arch-Specific Plugin Manifest
+        run: spin pluginify --arch ${{ matrix.config.pluginifyArch }} --os ${{ matrix.config.pluginifyOs }}
 
-      - name: Package plugin
-        run: |
-          ./spin-pluginify \
-            --arch ${{ matrix.pluginify_arch }} \
-            --os ${{ matrix.pluginify_os }}
-
-      - name: Upload artifacts
+      - name: Archive Binary and Manifest
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: ${{ env.PROGRAM_NAME}}-${{ matrix.config.pluginifyOs }}-${{ matrix.config.pluginifyArch }}
           path: |
-            ${{ env.PLUGIN_NAME }}*.tar.gz
-            ${{ env.PLUGIN_NAME }}-${{ matrix.pluginify_os }}-${{ matrix.pluginify_arch }}.json
+            *.tar.gz
+            *.json
 
-  # ──────────────────────────────────────────────
-  # Package: merge manifests and publish a release
-  # Only runs on push (not PRs)
-  # ──────────────────────────────────────────────
   package:
-    name: Publish Release
-    needs: build
+    name: Package Plugin
     runs-on: ubuntu-latest
+    needs: build
     if: github.event_name == 'push'
-    permissions:
-      contents: write
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Install Spin
+        uses: rajatjindal/setup-actions/spin@main
         with:
-          path: artifacts
-          merge-multiple: true
+          version: ${{ env.SPIN_VERSION }}
+      - name: Install Pluginify
+        run: spin plugins install --url https://github.com/itowlson/spin-pluginify/releases/download/canary/pluginify.json --yes
 
-      - name: Install spin-pluginify
+      - name: set the release version (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "RELEASE_VERSION=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
+      - name: set the release version (main)
+        if: github.ref == 'refs/heads/main'
+        run: echo "RELEASE_VERSION=canary" >> $GITHUB_ENV
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Display structure of downloaded files
+        run: ls -R
+      - name: pluginify it
         run: |
-          curl -fsSL https://github.com/itowlson/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
-          chmod +x spin-pluginify
+          spin pluginify --merge --release-url-base https://github.com/fermyon/otel-plugin/releases/download/${{ env.RELEASE_VERSION }}/ >${{ env.PROGRAM_NAME }}.json
+      - name: Display merged manifest
+        run: cat ${{ env.PROGRAM_NAME }}.json
+      - name: Archive Combined Manifest
+        uses: actions/upload-artifact@v4
+        with:
+          path: ${{ env.PROGRAM_NAME }}.json
 
-      - name: Determine release tag
-        id: tag
+      - name: Gather all new release files
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=canary" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          fi
+          mkdir release-assets
+          find . -name "*.tar.gz" -exec cp {} release-assets/ \;
+          cp ${{ env.PROGRAM_NAME }}.json release-assets/
+          ls release-assets/
 
-      - name: Merge plugin manifests
-        run: |
-          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}"
-          ./spin-pluginify \
-            --merge \
-            --release-url-base "${RELEASE_URL}/" \
-            > ${{ env.PLUGIN_NAME }}.json
-          cat ${{ env.PLUGIN_NAME }}.json
-
-      - name: Delete existing canary release (if applicable)
-        if: steps.tag.outputs.tag == 'canary'
+      # Handle versioned release
+      - name: Create versioned release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create ${{ env.RELEASE_VERSION }} --title "${{ env.RELEASE_VERSION }}" --repo ${{ github.repository }} release-assets/*
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release delete canary --yes --cleanup-tag || true
+          GH_TOKEN: ${{ github.token }}
 
-      - name: Create GitHub Release
+      # Handle canary release
+      - name: Delete canary release
+        if: github.ref == 'refs/heads/main'
+        run: gh release delete ${{ env.RELEASE_VERSION }} --repo ${{ github.repository }} --cleanup-tag || echo "Release not found, continuing..."
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create \
-            "${{ steps.tag.outputs.tag }}" \
-            --title "${{ steps.tag.outputs.tag }}" \
-            --prerelease=${{ steps.tag.outputs.prerelease }} \
-            ${{ steps.tag.outputs.tag == 'canary' && '--notes "Canary build from the latest commit on main."' || '' }} \
-            artifacts/*.tar.gz \
-            ${{ env.PLUGIN_NAME }}.json
+          GH_TOKEN: ${{ github.token }}
+      - name: Recreate canary release
+        if: github.ref == 'refs/heads/main'
+        run: gh release create ${{ env.RELEASE_VERSION }} --title "${{ env.RELEASE_VERSION }}" --prerelease --repo ${{ github.repository }} release-assets/*
+        env:
+          GH_TOKEN: ${{ github.token }}

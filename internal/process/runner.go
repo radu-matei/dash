@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // Status represents the lifecycle state of the managed spin process.
@@ -49,6 +50,7 @@ type Runner struct {
 	cmd        *exec.Cmd
 	pgid       int
 	mu         sync.Mutex
+	done       chan struct{}  // closed when the current child process exits
 	status     atomic.Int32
 	err        atomic.Value // stores the last error string
 	listenAddr atomic.Value // stores the detected "Serving http://..." URL
@@ -62,6 +64,7 @@ func New(spinBin string, args []string, extraEnv []string, logFn LogFunc) *Runne
 		args:     args,
 		extraEnv: extraEnv,
 		logFn:    logFn,
+		done:     make(chan struct{}),
 	}
 	r.status.Store(int32(StatusStarting))
 	return r
@@ -71,6 +74,8 @@ func New(spinBin string, args []string, extraEnv []string, logFn LogFunc) *Runne
 func (r *Runner) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	r.done = make(chan struct{})
 
 	cmd := exec.Command(r.spinBin, r.args...)
 	cmd.Env = append(os.Environ(), r.extraEnv...)
@@ -111,6 +116,41 @@ func (r *Runner) Stop() {
 	if r.pgid > 0 {
 		_ = syscall.Kill(-r.pgid, syscall.SIGTERM)
 	}
+}
+
+// Restart stops the running Spin process and starts a fresh one, keeping the
+// dashboard HTTP server alive. It waits up to 8 s for the old process to exit
+// before force-killing it, then resets state and calls Start().
+func (r *Runner) Restart() error {
+	r.mu.Lock()
+	pgid := r.pgid
+	done := r.done
+	r.mu.Unlock()
+
+	r.logFn("system", "▶  Restarting Spin app…")
+
+	if pgid > 0 {
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	}
+
+	// Wait for the old process to exit cleanly, then force-kill if needed.
+	select {
+	case <-done:
+	case <-time.After(8 * time.Second):
+		if pgid > 0 {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	}
+
+	// Reset per-run state so the new process starts fresh.
+	r.listenAddr.Store("")
+	r.err.Store("")
+
+	return r.Start()
 }
 
 // Status returns the current lifecycle status.
@@ -175,6 +215,10 @@ func extractServingAddr(line string) string {
 }
 
 func (r *Runner) wait() {
+	r.mu.Lock()
+	done := r.done
+	r.mu.Unlock()
+
 	err := r.cmd.Wait()
 	if err != nil {
 		r.status.Store(int32(StatusError))
@@ -188,4 +232,5 @@ func (r *Runner) wait() {
 		r.logFn("system", msg)
 		fmt.Fprintln(os.Stderr, msg)
 	}
+	close(done)
 }

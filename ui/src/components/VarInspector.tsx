@@ -1,18 +1,22 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, Eye, EyeOff, Search, Settings } from 'lucide-react'
+import { AlertCircle, Eye, EyeOff, Plus, Search, Settings } from 'lucide-react'
 import { getVars, type VarEntry } from '../api/client'
+import AddVariableDialog from './AddVariableDialog'
 
 export default function VarInspector() {
   const [vars, setVars] = useState<VarEntry[]>([])
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
+  const [showAddVar, setShowAddVar] = useState(false)
 
-  useEffect(() => {
+  function reloadVars() {
     getVars()
       .then(data => setVars(data ?? []))
       .catch((e: Error) => setError(e.message))
-  }, [])
+  }
+
+  useEffect(() => { reloadVars() }, [])
 
   const filtered = vars.filter(
     v => !search ||
@@ -48,14 +52,22 @@ export default function VarInspector() {
             </>
           )}
         </div>
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            className="input text-xs py-1 pl-8 h-8 w-56"
-            placeholder="Search variables…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setShowAddVar(true)}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add Variable
+          </button>
+          <div className="relative">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              className="input text-xs py-1 pl-8 h-8 w-56"
+              placeholder="Search variables…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+          </div>
         </div>
       </div>
 
@@ -145,6 +157,13 @@ export default function VarInspector() {
           </div>
         )}
       </div>
+
+      {showAddVar && (
+        <AddVariableDialog
+          onClose={() => setShowAddVar(false)}
+          onSuccess={() => { reloadVars(); setShowAddVar(false) }}
+        />
+      )}
     </div>
   )
 }
