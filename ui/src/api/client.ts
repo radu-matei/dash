@@ -9,6 +9,17 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return res.json()
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({ error: res.statusText }))
+  if (!res.ok) throw new Error((data as { error?: string }).error ?? res.statusText)
+  return data as T
+}
+
 // ── Status ────────────────────────────────────────────────────────────────────
 
 export type SpinStatus = 'starting' | 'running' | 'stopped' | 'error'
@@ -63,6 +74,8 @@ export interface AppInfo {
   components: ComponentInfo[]
   triggers: TriggerInfo[]
   varCount: number
+  /** Keys of all variables declared in [variables] in spin.toml. */
+  variableKeys: string[]
   listenAddr?: string
 }
 
@@ -117,6 +130,7 @@ export interface VarEntry {
   value: string
   source: 'spin.toml' | '.env' | 'SPIN_VARIABLE' | '--variable'
   secret: boolean
+  declared: boolean
 }
 
 export const getVars = () => get<VarEntry[]>('/api/vars')
@@ -138,4 +152,43 @@ export interface MetricSeries {
 }
 
 export const getOtelMetrics = (signal?: AbortSignal) => get<Record<string, MetricSeries>>('/api/otel-metrics', signal)
+
+// ── Mutations ─────────────────────────────────────────────────────────────────
+
+export interface MutationResult {
+  message: string
+}
+
+/** Run `spin add -t template name` in the app directory.
+ *  `route` is required for HTTP templates and must be unique across triggers. */
+export const addComponent = (template: string, name: string, route: string) =>
+  post<MutationResult>('/api/add-component', { template, name, route })
+
+/** Add a new variable to [variables] in spin.toml and wire it to the given
+ *  components via [component.<id>.variables]. Restarts Spin on success. */
+export const addVariable = (
+  name: string,
+  defaultValue: string,
+  required: boolean,
+  secret: boolean,
+  componentIds: string[],
+) => post<MutationResult>('/api/add-variable', { name, defaultValue, required, secret, componentIds })
+
+/** Add a KV store or SQLite binding to a component in spin.toml and restart Spin. */
+export const addBinding = (
+  componentId: string,
+  type: 'kv' | 'sqlite',
+  storeName: string,
+) => post<MutationResult>('/api/add-binding', { componentId, type, storeName })
+
+/** Wire an existing [variables] entry to a component's [component.<id>.variables]. */
+export const addComponentVariable = (componentId: string, varName: string) =>
+  post<MutationResult>('/api/add-component-variable', { componentId, varName })
+
+/** Remove a KV or SQLite binding from a component in spin.toml. */
+export const removeBinding = (componentId: string, type: 'kv' | 'sqlite', storeName: string) =>
+  post<MutationResult>('/api/remove-binding', { componentId, type, storeName })
+
+/** Restart the Spin child process without touching spin.toml. */
+export const restartSpin = () => post<MutationResult>('/api/restart', {})
 

@@ -73,12 +73,13 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Apply SPIN_VARIABLE_* environment variable overrides.
 	// Priority: spin.toml < .env < SPIN_VARIABLE_* < --variable (highest)
-	applyVarOverride(cfg, collectSpinVarEnv(), "SPIN_VARIABLE")
+	envOverrides := collectSpinVarEnv()
+	config.ApplyOverrides(cfg, envOverrides, "SPIN_VARIABLE")
 
 	// Apply --variable flag overrides and capture --listen address from the
 	// extra args that will be forwarded to 'spin up'.
-	varOverrides, listenAddr := parseSpinArgs(args)
-	applyVarOverride(cfg, varOverrides, "--variable")
+	cliOverrides, listenAddr := parseSpinArgs(args)
+	config.ApplyOverrides(cfg, cliOverrides, "--variable")
 	cfg.ListenAddr = listenAddr
 
 	fmt.Printf("▶  Spin Dashboard — app: %s\n", cfg.Name)
@@ -110,12 +111,16 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Set up the HTTP mux.
 	mux, err := server.New(server.Options{
-		Port:        port,
-		Hub:         hub,
-		Runner:      runner,
-		OTel:        otelReceiver,
-		OTelMetrics: metricsReceiver,
-		Cfg:         cfg,
+		Port:         port,
+		Hub:          hub,
+		Runner:       runner,
+		OTel:         otelReceiver,
+		OTelMetrics:  metricsReceiver,
+		Cfg:          cfg,
+		Dir:          cwd,
+		SpinBin:      spinBin,
+		EnvOverrides: envOverrides,
+		CliOverrides: cliOverrides,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up server: %w", err)
@@ -221,29 +226,6 @@ func collectSpinVarEnv() map[string]string {
 		out[key] = rest[idx+1:]
 	}
 	return out
-}
-
-// applyVarOverride applies a map of key→value overrides to cfg.Variables,
-// tagging each changed (or newly added) entry with the given source label.
-func applyVarOverride(cfg *config.AppConfig, overrides map[string]string, source string) {
-	for k, v := range overrides {
-		applied := false
-		for i := range cfg.Variables {
-			if cfg.Variables[i].Key == k {
-				cfg.Variables[i].Value = v
-				cfg.Variables[i].Source = source
-				applied = true
-				break
-			}
-		}
-		if !applied {
-			cfg.Variables = append(cfg.Variables, config.VarEntry{
-				Key:    k,
-				Value:  v,
-				Source: source,
-			})
-		}
-	}
 }
 
 // parseSpinArgs scans the extra args forwarded to 'spin up' and extracts:

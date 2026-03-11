@@ -13,15 +13,24 @@ import {
   Key,
   Layers,
   LayoutList,
+  Loader2,
   MessageSquare,
   Network,
+  Package,
+  Pencil,
+  Plus,
   RefreshCw,
+  RotateCcw,
+  Trash2,
   X,
   Zap,
 } from 'lucide-react'
 import { Icon } from '@iconify/react'
-import { type ComponentInfo, type TriggerInfo } from '../api/client'
+import { type ComponentInfo, type TriggerInfo, removeBinding, restartSpin } from '../api/client'
 import { useAppStore } from '../store/appContext'
+import AddComponentDialog from './AddComponentDialog'
+import AddBindingDialog from './AddBindingDialog'
+import EditSpinTomlModal from './EditSpinTomlModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -183,6 +192,21 @@ function hostDescription(h: string): string {
 }
 
 function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClose: () => void }) {
+  const { refresh } = useAppStore()
+
+  const [deletingBinding, setDeletingBinding] = useState<{ type: 'kv' | 'sqlite'; name: string } | null>(null)
+
+  async function handleRemoveBinding(type: 'kv' | 'sqlite', name: string) {
+    setDeletingBinding({ type, name })
+    try {
+      await removeBinding(c.id, type, name)
+      refresh()
+    } catch {
+      // error is transient; just unblock the UI
+    } finally {
+      setDeletingBinding(null)
+    }
+  }
   const lang     = detectLang(c)
   const size     = c.sourceSize ? fmtBytes(c.sourceSize) : null
   const digest   = c.sourceDigest   // e.g. "sha256:abc123..."
@@ -278,26 +302,60 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
         {/* KV Stores */}
         {c.keyValueStores && c.keyValueStores.length > 0 && (
           <PaneSection title="Key-Value Stores" Icon={Key} count={c.keyValueStores.length}>
-            {c.keyValueStores.map(s => (
-              <InfoRow key={s} Icon={Key} main={s} sub="Key-value store" tag="KV Store" tagColor="purple" />
-            ))}
+            {c.keyValueStores.map(s => {
+              const isDeleting = deletingBinding?.type === 'kv' && deletingBinding.name === s
+              return (
+                <div key={s} className="flex items-center gap-1 group">
+                  <div className="flex-1 min-w-0">
+                    <InfoRow Icon={Key} main={s} sub="Key-value store" tag="KV Store" tagColor="purple" />
+                  </div>
+                  <button
+                    className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                    title={`Remove "${s}" binding`}
+                    disabled={!!deletingBinding}
+                    onClick={() => handleRemoveBinding('kv', s)}
+                  >
+                    {isDeleting
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              )
+            })}
           </PaneSection>
         )}
 
         {/* SQLite */}
         {c.sqliteDatabases && c.sqliteDatabases.length > 0 && (
           <PaneSection title="SQLite Databases" Icon={Database} count={c.sqliteDatabases.length}>
-            {c.sqliteDatabases.map(s => (
-              <InfoRow key={s} Icon={Database} main={s} sub="SQLite database" tag="SQLite" tagColor="blue" />
-            ))}
+            {c.sqliteDatabases.map(s => {
+              const isDeleting = deletingBinding?.type === 'sqlite' && deletingBinding.name === s
+              return (
+                <div key={s} className="flex items-center gap-1 group">
+                  <div className="flex-1 min-w-0">
+                    <InfoRow Icon={Database} main={s} sub="SQLite database" tag="SQLite" tagColor="blue" />
+                  </div>
+                  <button
+                    className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                    title={`Remove "${s}" database`}
+                    disabled={!!deletingBinding}
+                    onClick={() => handleRemoveBinding('sqlite', s)}
+                  >
+                    {isDeleting
+                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
+                      : <Trash2 className="w-3.5 h-3.5" />}
+                  </button>
+                </div>
+              )
+            })}
           </PaneSection>
         )}
 
-        {/* Variables */}
+        {/* Variables — wired to this component */}
         {c.variables && Object.keys(c.variables).length > 0 && (
           <PaneSection title="Variables" Icon={Layers} count={Object.keys(c.variables).length}>
             {Object.entries(c.variables).map(([k, v]) => (
-              <InfoRow key={k} Icon={Layers} main={`${k} = ${v || '(empty)'}`} sub="Component variable" />
+              <InfoRow key={k} Icon={Layers} main={`${k} = ${v || '(empty)'}`} sub="Wired to component" tagColor="gray" />
             ))}
           </PaneSection>
         )}
@@ -882,11 +940,16 @@ function ComponentRow({ comp }: { comp: ComponentInfo }) {
 type ViewMode = 'graph' | 'list'
 
 export default function AppOverview() {
-  const { app }             = useAppStore()
+  const { app, refresh }    = useAppStore()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
   const [view, setView]     = useState<ViewMode>('graph')
   const [selected, setSelected] = useState<Selection | null>(null)
+
+  const [showAddComp, setShowAddComp]       = useState(false)
+  const [showAddBinding, setShowAddBinding] = useState(false)
+  const [showEditToml, setShowEditToml]     = useState(false)
+  const [restarting, setRestarting]         = useState(false)
 
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
@@ -922,6 +985,47 @@ export default function AppOverview() {
           <StatusChip status={app?.status ?? 'starting'} error={app?.error ?? ''} />
         </div>
         <div className="flex items-center gap-2">
+          {/* Mutation action buttons */}
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setShowAddComp(true)}
+            title="Add a new component via spin add"
+          >
+            <Package className="w-3.5 h-3.5" /> Add Component
+          </button>
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setShowAddBinding(true)}
+            title="Add a KV or SQLite binding to a component"
+            disabled={(app?.components ?? []).length === 0}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add Binding
+          </button>
+          <button
+            className="btn-secondary text-xs"
+            disabled={restarting}
+            onClick={async () => {
+              setRestarting(true)
+              try { await restartSpin() } catch { /* ignore */ }
+              setTimeout(() => { setRestarting(false); refresh() }, 2000)
+            }}
+            title="Restart the Spin process"
+          >
+            <RotateCcw className={`w-3.5 h-3.5 ${restarting ? 'animate-spin' : ''}`} />
+            {restarting ? 'Restarting…' : 'Restart'}
+          </button>
+
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setShowEditToml(true)}
+            title="Open spin.toml in an editable text view"
+          >
+            <Pencil className="w-3.5 h-3.5" /> Edit spin.toml
+          </button>
+
+          <div className="w-px h-5 bg-gray-200 mx-1" />
+
+          {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
             <button
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-md font-medium transition-all ${view === 'graph' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
@@ -1029,6 +1133,27 @@ export default function AppOverview() {
           <DetailPane component={selectedComponent} onClose={() => setSelected(null)} />
         )}
       </div>
+
+      {/* Dialogs */}
+      {showAddComp && (
+        <AddComponentDialog
+          onClose={() => setShowAddComp(false)}
+          onSuccess={() => { refresh(); setShowAddComp(false) }}
+        />
+      )}
+      {showAddBinding && (
+        <AddBindingDialog
+          components={components}
+          onClose={() => setShowAddBinding(false)}
+          onSuccess={() => { refresh(); setShowAddBinding(false) }}
+        />
+      )}
+      {showEditToml && (
+        <EditSpinTomlModal
+          onClose={() => setShowEditToml(false)}
+          onSaved={() => { refresh(); }}
+        />
+      )}
     </div>
   )
 }
