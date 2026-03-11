@@ -164,9 +164,9 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
   const events = span.events ?? []
 
   return (
-    <div className="border-t border-gray-200 bg-white text-xs flex flex-col max-h-72 overflow-y-auto">
+    <div className="border-b-2 border-blue-100 bg-blue-50/30 text-xs">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-200 sticky top-0 z-10">
+      <div className="flex items-center justify-between px-4 py-2 bg-blue-50/60 border-b border-blue-100">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: isError ? '#dc2626' : color }} />
           <span className="font-semibold text-gray-900 font-mono truncate">{span.name}</span>
@@ -314,8 +314,8 @@ function Waterfall({
         const hasAttrs = Object.keys(node.span.attrs ?? {}).length > 0
 
         return (
+          <div key={node.span.spanId} className="flex flex-col">
           <div
-            key={node.span.spanId}
             onClick={() => onSelectSpan(isSelected ? null : node.span.spanId)}
             className={`flex items-center border-b border-gray-100 cursor-pointer transition-colors ${
               isSelected ? 'bg-blue-50' : isError ? 'bg-red-50/40 hover:bg-red-50/70' : 'hover:bg-gray-50'
@@ -366,6 +366,10 @@ function Waterfall({
                 />
               </div>
             </div>
+          </div>
+          {isSelected && (
+            <SpanDetail node={node} colorMap={colorMap} onClose={() => onSelectSpan(null)} />
+          )}
           </div>
         )
       })}
@@ -465,7 +469,24 @@ export default function TraceViewer() {
   const [errorsOnly, setErrorsOnly] = useState(() => searchParams.get('errors') === '1')
   const [activeTab, setActiveTab] = useState<'waterfall' | 'logs'>('waterfall')
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
+  const [listHeight, setListHeight] = useState(192) // px – resizable trace-list height
+  const isDragging = useRef(false)
+  const dragStartY = useRef(0)
+  const dragStartH = useRef(0)
   const navigate = useNavigate()
+
+  // Drag-to-resize the trace list / detail-panel split.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = e.clientY - dragStartY.current
+      setListHeight(Math.max(72, Math.min(600, dragStartH.current + delta)))
+    }
+    const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
 
   // Fetch app manifest once to build the route→component map.
   useEffect(() => {
@@ -523,13 +544,6 @@ export default function TraceViewer() {
   const selectedTrace = useMemo(() => traces.find(t => t.traceId === selected) ?? null, [traces, selected])
   const maxDuration   = useMemo(() => Math.max(...traces.map(t => t.durationMs), 1), [traces])
   const errorCount    = traces.filter(t => t.hasErrors).length
-
-  // When selected span changes, clear if the new selected trace doesn't include it
-  const selectedSpanNode = useMemo(() => {
-    if (!selectedTrace || !selectedSpanId) return null
-    const flat = flattenTree(buildTree(selectedTrace.spans))
-    return flat.find(n => n.span.spanId === selectedSpanId) ?? null
-  }, [selectedTrace, selectedSpanId])
 
   const openInLogs = (trace: TraceGroup) => {
     const params = new URLSearchParams({
@@ -596,7 +610,10 @@ export default function TraceViewer() {
         <div className="flex-1 flex flex-col overflow-hidden min-h-0">
 
           {/* ── Trace list ──────────────────────────────────────── */}
-          <div className={`overflow-y-auto shrink-0 ${selectedTrace ? 'max-h-48 border-b border-gray-200' : 'flex-1'}`}>
+          <div
+            className={`overflow-y-auto shrink-0 ${selectedTrace ? 'border-b border-gray-200' : 'flex-1'}`}
+            style={selectedTrace ? { height: listHeight } : undefined}
+          >
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 bg-gray-50/95 z-10 border-b border-gray-200">
                 <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -658,6 +675,22 @@ export default function TraceViewer() {
             </table>
           </div>
 
+          {/* ── Resize handle ────────────────────────────────────── */}
+          {selectedTrace && (
+            <div
+              className="h-1.5 shrink-0 cursor-row-resize bg-gray-100 hover:bg-blue-200 active:bg-blue-300 transition-colors flex items-center justify-center group"
+              onMouseDown={e => {
+                isDragging.current = true
+                dragStartY.current = e.clientY
+                dragStartH.current = listHeight
+                document.body.style.cursor = 'row-resize'
+                e.preventDefault()
+              }}
+            >
+              <div className="w-10 h-0.5 rounded-full bg-gray-300 group-hover:bg-blue-400 transition-colors" />
+            </div>
+          )}
+
           {/* ── Detail panel ─────────────────────────────────────── */}
           {selectedTrace && (
             <div className="flex-1 flex flex-col overflow-hidden min-h-0">
@@ -706,14 +739,6 @@ export default function TraceViewer() {
                     selectedSpanId={selectedSpanId}
                     onSelectSpan={id => setSelectedSpanId(id)}
                   />
-                  {/* Span detail drawer */}
-                  {selectedSpanNode && (
-                    <SpanDetail
-                      node={selectedSpanNode}
-                      colorMap={colorMap}
-                      onClose={() => setSelectedSpanId(null)}
-                    />
-                  )}
                 </div>
               )}
 
