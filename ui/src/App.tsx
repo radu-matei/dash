@@ -6,7 +6,6 @@ import AppOverview from './components/AppOverview'
 import LogViewer from './components/LogViewer'
 import TraceViewer from './components/TraceViewer'
 import MetricsPage from './components/MetricsPage'
-import VarInspector from './components/VarInspector'
 
 export default function App() {
   return (
@@ -20,7 +19,6 @@ export default function App() {
             <Route path="logs" element={<LogViewer />} />
             <Route path="traces" element={<TraceViewer />} />
             <Route path="metrics" element={<MetricsPage />} />
-            <Route path="vars" element={<VarInspector />} />
           </Route>
         </Routes>
       </BrowserRouter>

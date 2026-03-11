@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronRight,
   Clock,
   Code2,
   Database,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileText,
   FolderOpen,
   Globe,
@@ -21,16 +24,18 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Settings,
   Terminal,
   Trash2,
   X,
   Zap,
 } from 'lucide-react'
 import { Icon } from '@iconify/react'
-import { type ComponentInfo, type TriggerInfo, removeBinding, restartSpin } from '../api/client'
+import { type ComponentInfo, type TriggerInfo, type VarEntry, getVars, removeBinding, restartSpin } from '../api/client'
 import { useAppStore } from '../store/appContext'
 import AddComponentDialog from './AddComponentDialog'
 import AddBindingDialog from './AddBindingDialog'
+import AddVariableDialog from './AddVariableDialog'
 import EditSpinTomlModal from './EditSpinTomlModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -211,9 +216,14 @@ function PaneSection({
 }
 
 function InfoRow({
-  Icon: RowIcon, main, sub, tag, tagColor = 'gray',
+  Icon: RowIcon, main, sub, tag, tagColor = 'gray', onClick,
 }: {
-  Icon: React.FC<{ className?: string }>; main: React.ReactNode; sub?: string; tag?: string; tagColor?: 'gray' | 'green' | 'purple' | 'blue' | 'red' | 'orange' | 'teal'
+  Icon: React.FC<{ className?: string }>
+  main: React.ReactNode
+  sub?: string
+  tag?: string
+  tagColor?: 'gray' | 'green' | 'purple' | 'blue' | 'red' | 'orange' | 'teal'
+  onClick?: () => void
 }) {
   const tagCls = ({
     gray:   'bg-gray-100 text-gray-500',
@@ -225,8 +235,8 @@ function InfoRow({
     teal:   'bg-teal-50 text-teal-700',
   } as Record<string, string>)[tagColor] ?? 'bg-gray-100 text-gray-500'
 
-  return (
-    <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+  const inner = (
+    <>
       <RowIcon className="w-4 h-4 text-gray-400 shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium text-gray-800 font-mono truncate">{main}</div>
@@ -235,6 +245,25 @@ function InfoRow({
       {tag && (
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${tagCls}`}>{tag}</span>
       )}
+      {onClick && (
+        <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0 -mr-0.5" />
+      )}
+    </>
+  )
+
+  if (onClick) {
+    return (
+      <button
+        className="w-full flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5 text-left hover:border-gray-300 hover:bg-gray-50 transition-colors group"
+        onClick={onClick}
+      >
+        {inner}
+      </button>
+    )
+  }
+  return (
+    <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+      {inner}
     </div>
   )
 }
@@ -246,11 +275,12 @@ function hostDescription(h: string): string {
   return 'Specific host'
 }
 
-function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClose: () => void }) {
-  const { refresh } = useAppStore()
+// ─── Shared drag-to-resize hook ───────────────────────────────────────────────
 
-  // ── Drag-to-resize ──────────────────────────────────────────────────────────
-  const [paneWidth, setPaneWidth] = useState(384)      // matches w-96
+function usePaneResize(
+  paneWidth: number,
+  onPaneWidthChange: (w: number) => void,
+) {
   const isDragging  = useRef(false)
   const dragStartX  = useRef(0)
   const dragStartW  = useRef(0)
@@ -258,15 +288,39 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!isDragging.current) return
-      // Dragging the LEFT edge: moving cursor left → wider
       const delta = dragStartX.current - e.clientX
-      setPaneWidth(Math.max(260, Math.min(700, dragStartW.current + delta)))
+      onPaneWidthChange(Math.max(260, Math.min(700, dragStartW.current + delta)))
     }
     const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    isDragging.current = true
+    dragStartX.current = e.clientX
+    dragStartW.current = paneWidth
+    document.body.style.cursor = 'col-resize'
+    e.preventDefault()
+  }
+
+  return handleMouseDown
+}
+
+// ─── Detail pane (component) ──────────────────────────────────────────────────
+
+function DetailPane({
+  component: c, onClose, paneWidth, onPaneWidthChange,
+}: {
+  component: ComponentInfo
+  onClose: () => void
+  paneWidth: number
+  onPaneWidthChange: (w: number) => void
+}) {
+  const { refresh } = useAppStore()
+  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
 
   const [deletingBinding, setDeletingBinding] = useState<{ type: 'kv' | 'sqlite'; name: string } | null>(null)
 
@@ -300,13 +354,7 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
       {/* Drag handle — left edge */}
       <div
         className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-blue-300/60 active:bg-blue-400/70 transition-colors"
-        onMouseDown={e => {
-          isDragging.current = true
-          dragStartX.current = e.clientX
-          dragStartW.current = paneWidth
-          document.body.style.cursor = 'col-resize'
-          e.preventDefault()
-        }}
+        onMouseDown={handleDragMouseDown}
       />
       {/* ── Header ── */}
       <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
@@ -520,9 +568,11 @@ function bez(x1: number, y1: number, x2: number, y2: number) {
 
 // Clicking a component opens its detail pane.
 // Clicking a trigger-group highlights all connected components (no pane).
+// Clicking a variable node opens the variable pane.
 type Selection =
   | { kind: 'component';     componentId: string }
   | { kind: 'trigger-group'; triggerType: string }
+  | { kind: 'variable';      varName: string }
 
 // Hover target — any node type.
 type ActiveTarget =
@@ -533,6 +583,7 @@ type ActiveTarget =
 
 function selectionToActive(s: Selection): ActiveTarget {
   if (s.kind === 'trigger-group') return { kind: 'trigger-group', triggerType: s.triggerType }
+  if (s.kind === 'variable')      return { kind: 'variable', varName: s.varName }
   return { kind: 'component', componentId: s.componentId }
 }
 
@@ -990,30 +1041,36 @@ function TopologyGraph({
         {/* Variable nodes */}
         {hasVars && varNames.map((varName, vi) => {
           const usedBy = components.filter(c => componentUsesVar(c, varName))
-          const state = varState(varName)
+          const state  = varState(varName)
+          const isPinned = selected?.kind === 'variable' && selected.varName === varName
           return (
             <div key={`v-${vi}`}
-              className={`absolute flex items-center bg-white rounded-lg shadow-sm overflow-hidden border cursor-pointer transition-all ${
+              className={`absolute flex items-center bg-white rounded-lg overflow-hidden border cursor-pointer transition-all ${
                 state === 'hi'
-                  ? 'border-amber-400 shadow-amber-100 shadow-md'
+                  ? 'border-amber-400 shadow-amber-100 shadow-md ring-2 ring-amber-300/60'
                   : state === 'sec'
-                  ? 'border-amber-300'
-                  : 'border-amber-200 hover:border-amber-300'
+                  ? 'border-amber-300 shadow-sm'
+                  : 'border-amber-200 shadow-sm hover:border-amber-300 hover:shadow'
               }`}
               style={{
                 left: VAR_X + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H,
                 opacity: state === 'lo' ? 0.35 : 1,
                 transition: 'opacity 0.15s, box-shadow 0.15s',
               }}
+              onClick={() => onSelect(isPinned ? null : { kind: 'variable', varName })}
               onMouseEnter={() => setHovered({ kind: 'variable', varName })}
               onMouseLeave={() => setHovered(null)}
             >
-              <div className={`w-8 h-full flex items-center justify-center shrink-0 border-r ${state === 'hi' ? 'bg-amber-100 border-amber-200' : 'bg-amber-50 border-amber-100'}`}>
-                <Layers className="w-3.5 h-3.5 text-amber-500" />
+              <div className={`w-8 h-full flex items-center justify-center shrink-0 border-r ${state === 'hi' || isPinned ? 'bg-amber-100 border-amber-200' : 'bg-amber-50 border-amber-100'}`}>
+                <Key className="w-3.5 h-3.5 text-amber-500" />
               </div>
               <div className="px-2.5 min-w-0 flex-1">
                 <div className="text-xs font-semibold text-gray-800 font-mono truncate">{varName}</div>
-                {usedBy.length > 1 && <div className="text-[10px] text-amber-400 leading-tight">{usedBy.length} components</div>}
+                {usedBy.length > 0 && (
+                  <div className="text-[10px] text-amber-400 leading-tight">
+                    {usedBy.length === 1 ? usedBy[0].id : `${usedBy.length} components`}
+                  </div>
+                )}
               </div>
             </div>
           )
@@ -1131,6 +1188,243 @@ function ComponentRow({ comp }: { comp: ComponentInfo }) {
   )
 }
 
+// ─── Variable pane ────────────────────────────────────────────────────────────
+
+const SOURCE_BADGE: Record<string, string> = {
+  'spin.toml':    'badge-blue',
+  '.env':         'badge-yellow',
+  'SPIN_VARIABLE':'badge-orange',
+  '--variable':   'badge-green',
+}
+const SOURCE_LABEL: Record<string, string> = {
+  'spin.toml':    'spin.toml default',
+  '.env':         '.env file',
+  'SPIN_VARIABLE':'Environment variable',
+  '--variable':   'CLI flag',
+}
+
+function VariablePane({
+  varName, vars, components, onClose, onAddVar, paneWidth, onPaneWidthChange,
+}: {
+  varName: string
+  vars: VarEntry[]
+  components: ComponentInfo[]
+  onClose: () => void
+  onAddVar: () => void
+  paneWidth: number
+  onPaneWidthChange: (w: number) => void
+}) {
+  const entry = vars.find(v => v.key === varName)
+  const [revealed, setRevealed] = useState(false)
+
+  // Reset reveal state whenever a different variable is selected.
+  useEffect(() => { setRevealed(false) }, [varName])
+
+  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
+
+  const usedBy = components.filter(c => {
+    const vars = c.variables ?? {}
+    if (varName in vars) return true
+    const re = new RegExp(`\\{\\{\\s*${varName}\\s*\\}\\}`)
+    return Object.values(vars).some(v => re.test(v))
+  })
+
+  return (
+    <div
+      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
+      style={{ width: paneWidth }}
+    >
+      {/* Drag handle */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-amber-300/60 active:bg-amber-400/70 transition-colors"
+        onMouseDown={handleDragMouseDown}
+      />
+
+      {/* Header */}
+      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Key className="w-4 h-4 text-amber-500 shrink-0" />
+            <code className="text-base font-bold text-gray-900">{varName}</code>
+            {entry?.secret && <span className="badge badge-gray text-xs">secret</span>}
+          </div>
+          {entry && (
+            <span className={`mt-1.5 inline-flex items-center gap-1 ${SOURCE_BADGE[entry.source]} badge text-xs`}>
+              {SOURCE_LABEL[entry.source]}
+            </span>
+          )}
+          {!entry && vars.length > 0 && (
+            <p className="text-xs text-gray-400 mt-1">Value not yet resolved</p>
+          )}
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+        {/* Value */}
+        {entry && (
+          <PaneSection title="Value" Icon={Key}>
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+              {entry.secret ? (
+                <>
+                  <code className="font-mono text-xs text-gray-700 flex-1 select-all">
+                    {revealed
+                      ? (entry.value || <span className="text-gray-400 italic">empty</span>)
+                      : '••••••••'}
+                  </code>
+                  <button
+                    className="text-gray-400 hover:text-gray-700 transition-colors shrink-0"
+                    onClick={() => setRevealed(r => !r)}
+                    title={revealed ? 'Hide value' : 'Reveal value'}
+                  >
+                    {revealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                  </button>
+                </>
+              ) : (
+                <code className="font-mono text-xs text-gray-700 select-all break-all">
+                  {entry.value || <span className="text-gray-400 italic">empty</span>}
+                </code>
+              )}
+            </div>
+          </PaneSection>
+        )}
+
+        {/* Used by */}
+        {usedBy.length > 0 && (
+          <PaneSection title="Used by" Icon={Package} count={usedBy.length}>
+            {usedBy.map(c => {
+              const binding = c.variables?.[varName] ?? ''
+              const isIndirect = binding && binding !== `{{ ${varName} }}`
+              return (
+                <div key={c.id} className="flex items-start gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2">
+                  <Package className="w-3.5 h-3.5 text-gray-400 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1">
+                    <code className="text-xs font-mono text-gray-800">{c.id}</code>
+                    {binding && (
+                      <code className={`block text-[10px] font-mono mt-0.5 truncate ${isIndirect ? 'text-amber-500' : 'text-gray-400'}`}>
+                        {binding}
+                      </code>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </PaneSection>
+        )}
+
+        {usedBy.length === 0 && (
+          <div className="flex items-center gap-2 text-xs text-gray-400 italic">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            Not wired to any component yet.
+          </div>
+        )}
+
+        {/* Add variable shortcut */}
+        <button
+          className="w-full btn-secondary text-xs justify-center"
+          onClick={onAddVar}
+        >
+          <Plus className="w-3.5 h-3.5" /> Add another variable
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ─── Trigger pane ─────────────────────────────────────────────────────────────
+
+function TriggerPane({
+  triggerType, triggers, components, onClose, paneWidth, onPaneWidthChange,
+}: {
+  triggerType: string
+  triggers: TriggerInfo[]
+  components: ComponentInfo[]
+  onClose: () => void
+  paneWidth: number
+  onPaneWidthChange: (w: number) => void
+}) {
+  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
+  const meta = getTriggerMeta(triggerType)
+  const TIcon = meta.icon
+  const colors = TRIGGER_NODE_COLORS[meta.color]
+
+  return (
+    <div
+      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
+      style={{ width: paneWidth }}
+    >
+      {/* Drag handle */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors"
+        style={{ background: 'transparent' }}
+        onMouseDown={handleDragMouseDown}
+      />
+
+      {/* Header */}
+      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${colors.iconBgHi}`}>
+            <TIcon className={`w-4 h-4 ${colors.iconColor}`} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-base font-bold text-gray-900">{meta.label}</div>
+            <div className="text-xs text-gray-400 mt-0.5">
+              {triggers.length === 1 ? '1 trigger' : `${triggers.length} triggers`}
+            </div>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-3">
+        {triggers.map((t, i) => {
+          const comp = components.find(c => c.id === t.component)
+          const routeLabel = t.private ? null : (t.route ?? t.channel ?? t.address ?? null)
+
+          return (
+            <div key={i} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              {/* Route / channel */}
+              <div className="flex items-center gap-2 px-3 py-2.5 border-b border-gray-100">
+                {t.private ? (
+                  <span className="flex items-center gap-1.5 text-xs text-violet-600 font-medium">
+                    <Lock className="w-3.5 h-3.5 shrink-0" />
+                    Private endpoint
+                  </span>
+                ) : routeLabel ? (
+                  <code className="text-xs font-mono text-gray-800 font-semibold break-all">{routeLabel}</code>
+                ) : (
+                  <span className="text-xs text-gray-400 italic">No route</span>
+                )}
+              </div>
+
+              {/* Component */}
+              <div className="flex items-center gap-2 px-3 py-2">
+                <Package className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <code className="text-xs font-mono text-gray-700">{t.component}</code>
+                {comp && (() => {
+                  const lang = detectLang(comp)
+                  return lang ? (
+                    <span className="ml-auto">
+                      <LangIcon comp={comp} size={14} />
+                    </span>
+                  ) : null
+                })()}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 type ViewMode = 'graph' | 'list'
@@ -1144,8 +1438,18 @@ export default function AppOverview() {
 
   const [showAddComp, setShowAddComp]       = useState(false)
   const [showAddBinding, setShowAddBinding] = useState(false)
+  const [showAddVar, setShowAddVar]         = useState(false)
   const [showEditToml, setShowEditToml]     = useState(false)
   const [restarting, setRestarting]         = useState(false)
+
+  // Shared pane width — remembered across all pane types and open/close cycles.
+  const [paneWidth, setPaneWidth] = useState(384)
+
+  // Vars are fetched once and refreshed whenever the app reloads.
+  const [vars, setVars] = useState<VarEntry[]>([])
+  useEffect(() => {
+    getVars().then(v => setVars(v ?? [])).catch(() => {})
+  }, [app])
 
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
@@ -1166,6 +1470,9 @@ export default function AppOverview() {
   const selectedComponent = selected?.kind === 'component'
     ? components.find(c => c.id === selected.componentId) ?? null
     : null
+
+  const selectedVarName     = selected?.kind === 'variable'      ? selected.varName     : null
+  const selectedTriggerType = selected?.kind === 'trigger-group' ? selected.triggerType : null
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -1189,6 +1496,13 @@ export default function AppOverview() {
             title="Add a new component via spin add"
           >
             <Package className="w-3.5 h-3.5" /> Add Component
+          </button>
+          <button
+            className="btn-secondary text-xs"
+            onClick={() => setShowAddVar(true)}
+            title="Add a new application variable"
+          >
+            <Settings className="w-3.5 h-3.5" /> Add Variable
           </button>
           <button
             className="btn-secondary text-xs"
@@ -1331,9 +1645,39 @@ export default function AppOverview() {
           </div>
         </div>
 
-        {/* Detail pane */}
+        {/* Detail pane — component */}
         {selectedComponent && (
-          <DetailPane component={selectedComponent} onClose={() => setSelected(null)} />
+          <DetailPane
+            component={selectedComponent}
+            onClose={() => setSelected(null)}
+            paneWidth={paneWidth}
+            onPaneWidthChange={setPaneWidth}
+          />
+        )}
+
+        {/* Detail pane — variable */}
+        {selectedVarName && (
+          <VariablePane
+            varName={selectedVarName}
+            vars={vars}
+            components={components}
+            onClose={() => setSelected(null)}
+            onAddVar={() => setShowAddVar(true)}
+            paneWidth={paneWidth}
+            onPaneWidthChange={setPaneWidth}
+          />
+        )}
+
+        {/* Detail pane — trigger group */}
+        {selectedTriggerType && (
+          <TriggerPane
+            triggerType={selectedTriggerType}
+            triggers={triggers.filter(t => t.type === selectedTriggerType)}
+            components={components}
+            onClose={() => setSelected(null)}
+            paneWidth={paneWidth}
+            onPaneWidthChange={setPaneWidth}
+          />
         )}
       </div>
 
@@ -1349,6 +1693,16 @@ export default function AppOverview() {
           components={components}
           onClose={() => setShowAddBinding(false)}
           onSuccess={() => { refresh(); setShowAddBinding(false) }}
+        />
+      )}
+      {showAddVar && (
+        <AddVariableDialog
+          onClose={() => setShowAddVar(false)}
+          onSuccess={() => {
+            refresh()
+            getVars().then(v => setVars(v ?? [])).catch(() => {})
+            setShowAddVar(false)
+          }}
         />
       )}
       {showEditToml && (
