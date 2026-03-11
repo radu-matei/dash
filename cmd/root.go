@@ -23,10 +23,11 @@ import (
 )
 
 var (
-	port          int
-	noOpen        bool
-	otelPort      int
-	otelForwardTo string
+	port           int
+	noOpen         bool
+	otelPort       int
+	otelForwardTo  string
+	allowEdits bool
 )
 
 var rootCmd = &cobra.Command{
@@ -52,6 +53,7 @@ func init() {
 	rootCmd.Flags().IntVar(&otelPort, "otel-port", 4318, "port for the built-in OTLP receiver")
 	rootCmd.Flags().BoolVar(&noOpen, "no-open", false, "do not open the browser automatically")
 	rootCmd.Flags().StringVar(&otelForwardTo, "otel-forward-to", "", "forward all received OTLP data to this base URL (e.g. http://localhost:4317) for cross-app trace stitching in a shared backend")
+	rootCmd.Flags().BoolVar(&allowEdits, "allow-edits", false, "allow the dashboard to modify spin.toml (add/remove components, variables, bindings)")
 }
 
 func run(cmd *cobra.Command, args []string) error {
@@ -110,17 +112,22 @@ func run(cmd *cobra.Command, args []string) error {
 	runner := process.New(spinBin, append([]string{"up"}, args...), extraEnv, hub.Publish)
 
 	// Set up the HTTP mux.
+	if allowEdits {
+		fmt.Println("▶  Edits:      enabled (--allow-edits)")
+	}
+
 	mux, err := server.New(server.Options{
-		Port:         port,
-		Hub:          hub,
-		Runner:       runner,
-		OTel:         otelReceiver,
-		OTelMetrics:  metricsReceiver,
-		Cfg:          cfg,
-		Dir:          cwd,
-		SpinBin:      spinBin,
-		EnvOverrides: envOverrides,
-		CliOverrides: cliOverrides,
+		Port:           port,
+		Hub:            hub,
+		Runner:         runner,
+		OTel:           otelReceiver,
+		OTelMetrics:    metricsReceiver,
+		Cfg:            cfg,
+		Dir:            cwd,
+		SpinBin:        spinBin,
+		EnvOverrides:   envOverrides,
+		CliOverrides:   cliOverrides,
+		AllowMutations: allowEdits,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up server: %w", err)

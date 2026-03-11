@@ -79,6 +79,8 @@ export interface AppInfo {
   /** Keys of all variables declared in [variables] in spin.toml. */
   variableKeys: string[]
   listenAddr?: string
+  /** True only when the dashboard was started with --allow-edits. */
+  allowMutations: boolean
 }
 
 export const getApp = (signal?: AbortSignal) => get<AppInfo>('/api/app', signal)

@@ -290,11 +290,12 @@ function usePaneResize(
 // ─── Detail pane (component) ──────────────────────────────────────────────────
 
 function DetailPane({
-  component: c, onClose, onSelect, paneWidth, onPaneWidthChange,
+  component: c, onClose, onSelect, canMutate, paneWidth, onPaneWidthChange,
 }: {
   component: ComponentInfo
   onClose: () => void
   onSelect: (s: Selection) => void
+  canMutate: boolean
   paneWidth: number
   onPaneWidthChange: (w: number) => void
 }) {
@@ -441,16 +442,18 @@ function DetailPane({
                       onClick={() => onSelect({ kind: 'resource', resKind: 'kv', resName: s })}
                     />
                   </div>
-                  <button
-                    className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                    title={`Remove "${s}" binding`}
-                    disabled={!!deletingBinding}
-                    onClick={() => handleRemoveBinding('kv', s)}
-                  >
-                    {isDeleting
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
-                      : <Trash2 className="w-3.5 h-3.5" />}
-                  </button>
+                  {canMutate && (
+                    <button
+                      className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                      title={`Remove "${s}" binding`}
+                      disabled={!!deletingBinding}
+                      onClick={() => handleRemoveBinding('kv', s)}
+                    >
+                      {isDeleting
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
+                        : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -469,16 +472,18 @@ function DetailPane({
                       onClick={() => onSelect({ kind: 'resource', resKind: 'sqlite', resName: s })}
                     />
                   </div>
-                  <button
-                    className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
-                    title={`Remove "${s}" database`}
-                    disabled={!!deletingBinding}
-                    onClick={() => handleRemoveBinding('sqlite', s)}
-                  >
-                    {isDeleting
-                      ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
-                      : <Trash2 className="w-3.5 h-3.5" />}
-                  </button>
+                  {canMutate && (
+                    <button
+                      className="shrink-0 p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                      title={`Remove "${s}" database`}
+                      disabled={!!deletingBinding}
+                      onClick={() => handleRemoveBinding('sqlite', s)}
+                    >
+                      {isDeleting
+                        ? <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
+                        : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
                 </div>
               )
             })}
@@ -1118,7 +1123,7 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 function VariablePane({
-  varName, vars, components, onClose, onSelect, onAddVar, paneWidth, onPaneWidthChange,
+  varName, vars, components, onClose, onSelect, onAddVar, canMutate, paneWidth, onPaneWidthChange,
 }: {
   varName: string
   vars: VarEntry[]
@@ -1126,6 +1131,7 @@ function VariablePane({
   onClose: () => void
   onSelect: (s: Selection) => void
   onAddVar: () => void
+  canMutate: boolean
   paneWidth: number
   onPaneWidthChange: (w: number) => void
 }) {
@@ -1244,12 +1250,14 @@ function VariablePane({
         )}
 
         {/* Add variable shortcut */}
-        <button
-          className="w-full btn-secondary text-xs justify-center"
-          onClick={onAddVar}
-        >
-          <Plus className="w-3.5 h-3.5" /> Add another variable
-        </button>
+        {canMutate && (
+          <button
+            className="w-full btn-secondary text-xs justify-center"
+            onClick={onAddVar}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add another variable
+          </button>
+        )}
       </div>
     </div>
   )
@@ -1498,8 +1506,9 @@ export default function AppOverview() {
     </div>
   )
 
-  const components = app?.components ?? []
-  const triggers   = app?.triggers   ?? []
+  const components  = app?.components    ?? []
+  const triggers    = app?.triggers      ?? []
+  const canMutate   = app?.allowMutations ?? false
 
   // Resolve selected component object for the detail pane.
   // Trigger-group selections highlight components but don't open the pane.
@@ -1527,25 +1536,36 @@ export default function AppOverview() {
         </div>
         <div className="flex items-center gap-2">
           {/* Mutation action buttons */}
+          {!canMutate && (
+            <span
+              className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5"
+              title="Restart with --allow-edits to enable editing"
+            >
+              <Lock className="w-3 h-3 shrink-0" />
+              Read-only — pass <code className="font-mono">--allow-edits</code> to edit
+            </span>
+          )}
           <button
             className="btn-secondary text-xs"
             onClick={() => setShowAddComp(true)}
-            title="Add a new component via spin add"
+            disabled={!canMutate}
+            title={canMutate ? 'Add a new component via spin add' : 'Requires --allow-edits'}
           >
             <Package className="w-3.5 h-3.5" /> Add Component
           </button>
           <button
             className="btn-secondary text-xs"
             onClick={() => setShowAddVar(true)}
-            title="Add a new application variable"
+            disabled={!canMutate}
+            title={canMutate ? 'Add a new application variable' : 'Requires --allow-edits'}
           >
             <Settings className="w-3.5 h-3.5" /> Add Variable
           </button>
           <button
             className="btn-secondary text-xs"
             onClick={() => setShowAddBinding(true)}
-            title="Add a KV or SQLite binding to a component"
-            disabled={(app?.components ?? []).length === 0}
+            disabled={!canMutate || components.length === 0}
+            title={canMutate ? 'Add a KV or SQLite binding to a component' : 'Requires --allow-edits'}
           >
             <Plus className="w-3.5 h-3.5" /> Add Binding
           </button>
@@ -1609,6 +1629,7 @@ export default function AppOverview() {
             component={selectedComponent}
             onClose={() => setSelected(null)}
             onSelect={setSelected}
+            canMutate={canMutate}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
           />
@@ -1623,6 +1644,7 @@ export default function AppOverview() {
             onClose={() => setSelected(null)}
             onSelect={setSelected}
             onAddVar={() => setShowAddVar(true)}
+            canMutate={canMutate}
             paneWidth={paneWidth}
             onPaneWidthChange={setPaneWidth}
           />

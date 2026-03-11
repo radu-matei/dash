@@ -1,19 +1,19 @@
 # Spin Dashboard Plugin
 
-> Note: this is an experimental and unstable project. It was developed using assistive AI coding tools (Opus 4.6), and is subject to changes.
+> Experimental project developed with assistive AI coding tools. Subject to breaking changes.
 
 A zero-config local developer dashboard for the [Spin](https://github.com/spinframework/spin) framework.
 
-`spin dashboard` wraps `spin up` and opens a web UI that lets you inspect your local Spin application without dropping into the CLI.
+`spin dashboard` wraps `spin up` and opens a web UI for inspecting and (optionally) editing your Spin application — no separate tooling required.
 
 ## Features
 
-- **Application Structure Overview** — inspect the structure of your application in the web UI
-- **Live Log Streaming** — stdout/stderr from your Spin app streamed in real time
-- **OpenTelemetry Traces** — built-in OTLP receiver visualizing request waterfalls and latency charts
-- **Variable Inspector** — merged view of `spin.toml` variables
-
-> Note: this project is not intending to replace [the `spin otel` plugin](https://github.com/spinframework/otel-plugin). Rather, this project provides a unified, no-dependency dashboard that is opinionated about the information it displays, as opposed to `spin otel`, whose goal is to use existing tools that fit into existing workflows.
+- **Topology Graph** — interactive graph of components, triggers, KV/SQLite stores, and variables with clickable detail panes for each node
+- **Live Log Streaming** — stdout/stderr from `spin up` streamed in real time with log-level highlighting
+- **OpenTelemetry Traces** — built-in OTLP receiver visualising request waterfalls and span details
+- **OTel Metrics** — time-series charts for all received metric series
+- **Variable Inspector** — resolved runtime values (including secrets with reveal toggle) accessible by clicking a variable node in the graph
+- **Edit mode** (`--allow-edits`) — add components, variables, and bindings directly from the UI; delete KV/SQLite bindings
 
 ## Installation
 
@@ -45,10 +45,27 @@ The dashboard opens automatically at [http://localhost:3001](http://localhost:30
 
 ### Flags
 
-| Flag        | Default | Description                           |
-| ----------- | ------- | ------------------------------------- |
-| `--port`    | `3001`  | Port for the dashboard HTTP server    |
-| `--no-open` | `false` | Do not open the browser automatically |
+| Flag                | Default | Description                                                        |
+| ------------------- | ------- | ------------------------------------------------------------------ |
+| `--port`            | `3001`  | Port for the dashboard HTTP server                                 |
+| `--no-open`         | `false` | Do not open the browser automatically                              |
+| `--allow-edits`     | `false` | Enable UI controls to add/remove components, variables, bindings   |
+| `--otel-port`       | `4318`  | Port for the built-in OTLP receiver                                |
+| `--otel-forward-to` | —       | Forward OTLP data to an upstream collector (e.g. a shared backend) |
+
+### Edit mode
+
+By default the dashboard is read-only — `spin.toml` is never touched. Pass `--allow-edits` to unlock mutation controls:
+
+```bash
+spin dashboard --allow-edits
+```
+
+This enables:
+- **Add Component** — runs `spin add` with template-driven parameters
+- **Add Variable** — appends a new `[variables]` entry
+- **Add Binding** — wires a KV store, SQLite database, or variable to a component
+- **Delete bindings** — removes KV/SQLite entries from a component
 
 ## Building from Source
 
@@ -60,21 +77,6 @@ make build
 
 # Install as a Spin plugin
 make install
-```
-
-## Architecture
-
-```
-spin dashboard
-    │
-    ├── HTTP server :3001  (dashboard UI + JSON API)
-    │       ├── GET  /api/logs          SSE log stream
-    │       ├── GET  /api/traces        OTel trace summaries
-    │       ├── GET  /api/vars          merged variable map
-    ├── OTLP receiver :4318  (accepts traces from spin up)
-    │
-    └── spin up (child process)
-            OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
 ## Contributing

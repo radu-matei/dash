@@ -40,7 +40,7 @@ func statusHandler(runner *process.Runner) http.HandlerFunc {
 }
 
 // appHandler returns the full application structure (components, triggers, vars, status).
-func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runner) http.HandlerFunc {
+func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runner, allowMutations bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		listenAddr := runner.ListenAddr()
 		if listenAddr == "" {
@@ -62,15 +62,16 @@ func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runn
 		}
 
 		jsonOK(w, map[string]interface{}{
-			"name":         cfg.Name,
-			"description":  cfg.Description,
-			"status":       runner.Status().String(),
-			"error":        runner.LastError(),
-			"components":   cfg.Components,
-			"triggers":     cfg.Triggers,
-			"varCount":     len(varKeys), // only declared [variables] entries
-			"variableKeys": varKeys,
-			"listenAddr":   listenAddr,
+			"name":           cfg.Name,
+			"description":    cfg.Description,
+			"status":         runner.Status().String(),
+			"error":          runner.LastError(),
+			"components":     cfg.Components,
+			"triggers":       cfg.Triggers,
+			"varCount":       len(varKeys), // only declared [variables] entries
+			"variableKeys":   varKeys,
+			"listenAddr":     listenAddr,
+			"allowMutations": allowMutations,
 		})
 	}
 }

@@ -34,6 +34,9 @@ type Options struct {
 	EnvOverrides map[string]string
 	// CliOverrides are the --variable flag values from the original CLI invocation.
 	CliOverrides map[string]string
+	// AllowMutations controls whether spin.toml mutation endpoints are active.
+	// Must be explicitly opted into via --allow-edits on the CLI.
+	AllowMutations bool
 }
 
 // New builds and returns a configured http.ServeMux ready to Serve.
@@ -47,19 +50,27 @@ func New(opts Options) (*http.ServeMux, error) {
 	// --- Read-only API routes ---
 	mux.Handle("/api/logs", opts.Hub)
 	mux.HandleFunc("/api/status", statusHandler(opts.Runner))
-	mux.HandleFunc("/api/app", appHandler(opts.Cfg, cfgMu, opts.Runner))
+	mux.HandleFunc("/api/app", appHandler(opts.Cfg, cfgMu, opts.Runner, opts.AllowMutations))
 	mux.HandleFunc("/api/vars", varsHandler(opts.Cfg, cfgMu))
 	mux.HandleFunc("/api/traces", tracesHandler(opts.OTel))
 	mux.HandleFunc("/api/otel-metrics", otelMetricsHandler(opts.OTelMetrics))
 	mux.HandleFunc("/api/templates", templatesHandler())
 
-	// --- Mutation routes ---
-	mux.HandleFunc("/api/spin-toml", spinTomlHandler(&opts, cfgMu))
-	mux.HandleFunc("/api/add-component", addComponentHandler(&opts, cfgMu))
-	mux.HandleFunc("/api/add-variable", addVariableHandler(&opts, cfgMu))
-	mux.HandleFunc("/api/add-binding", addBindingHandler(&opts, cfgMu))
-	mux.HandleFunc("/api/add-component-variable", addComponentVariableHandler(&opts, cfgMu))
-	mux.HandleFunc("/api/remove-binding", removeBindingHandler(&opts, cfgMu))
+	// --- Mutation routes (require --allow-edits) ---
+	mutationGuard := func(h http.HandlerFunc) http.HandlerFunc {
+		if opts.AllowMutations {
+			return h
+		}
+		return func(w http.ResponseWriter, r *http.Request) {
+			jsonErr(w, http.StatusForbidden, "edits are disabled; restart the dashboard with --allow-edits to enable them")
+		}
+	}
+	mux.HandleFunc("/api/spin-toml", mutationGuard(spinTomlHandler(&opts, cfgMu)))
+	mux.HandleFunc("/api/add-component", mutationGuard(addComponentHandler(&opts, cfgMu)))
+	mux.HandleFunc("/api/add-variable", mutationGuard(addVariableHandler(&opts, cfgMu)))
+	mux.HandleFunc("/api/add-binding", mutationGuard(addBindingHandler(&opts, cfgMu)))
+	mux.HandleFunc("/api/add-component-variable", mutationGuard(addComponentVariableHandler(&opts, cfgMu)))
+	mux.HandleFunc("/api/remove-binding", mutationGuard(removeBindingHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/restart", restartHandler(opts.Runner))
 
 	// --- SPA static file handler ---
