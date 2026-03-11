@@ -77,7 +77,7 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
       <div className="card p-6 flex flex-col items-center justify-center h-36 text-gray-400 gap-2">
         <BarChart2 className="w-8 h-8 opacity-25" />
         <p className="text-sm">No OTel metrics received yet.</p>
-        <p className="text-xs">Spin exports <code>spin.request_count</code> and <code>spin.response_duration</code>.</p>
+        <p className="text-xs">Spin exports <code>spin.request_count</code>, <code>spin.component_cpu_time</code>, <code>spin.component_memory_used</code>, and more.</p>
       </div>
     )
   }
@@ -328,7 +328,7 @@ export default function MetricsPage() {
       <div className="p-6 space-y-8">
         {/* OTel metrics from Spin */}
         <section>
-          <SectionHeader icon={BarChart2} title="OTel Metrics" sub="Metrics exported by Spin via OTLP (spin.request_count, spin.response_duration, etc.)" />
+          <SectionHeader icon={BarChart2} title="OTel Metrics" sub="Metrics exported by Spin via OTLP (spin.request_count, spin.component_cpu_time, spin.component_memory_used, etc.)" />
           <OtelSection series={otelMetrics} />
         </section>
 

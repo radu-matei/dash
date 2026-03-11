@@ -67,7 +67,7 @@ func (r *Receiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "read error", http.StatusBadRequest)
 		return
 	}
-	defer req.Body.Close()
+	defer func() { _ = req.Body.Close() }()
 
 	ct := req.Header.Get("Content-Type")
 

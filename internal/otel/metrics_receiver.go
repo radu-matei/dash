@@ -3,7 +3,6 @@ package otel
 import (
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -48,10 +47,10 @@ func (r *MetricsReceiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	ct := req.Header.Get("Content-Type")
-	if strings.Contains(ct, "application/x-protobuf") {
-		r.parseProto(body)
-	}
+	// Always attempt protobuf decoding — the Spin OTel SDK always sends
+	// application/x-protobuf, but we don't gate on the content-type so that
+	// minor header variations (e.g. extra params) don't silently drop metrics.
+	r.parseProto(body)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -140,12 +139,26 @@ func (r *MetricsReceiver) ingest(m *metricspb.Metric) {
 			if sum != nil && dp.Count > 0 {
 				avg = *sum / float64(dp.Count)
 			}
-			pt := MetricPoint{
+			s.Points = append(s.Points, MetricPoint{
 				Timestamp: nanoToTime(dp.TimeUnixNano),
 				Value:     avg,
 				Attrs:     attrsMap(dp.Attributes),
+			})
+		}
+
+	case *metricspb.Metric_ExponentialHistogram:
+		s.Kind = "histogram"
+		for _, dp := range d.ExponentialHistogram.DataPoints {
+			avg := 0.0
+			sum := dp.Sum
+			if sum != nil && dp.Count > 0 {
+				avg = *sum / float64(dp.Count)
 			}
-			s.Points = append(s.Points, pt)
+			s.Points = append(s.Points, MetricPoint{
+				Timestamp: nanoToTime(dp.TimeUnixNano),
+				Value:     avg,
+				Attrs:     attrsMap(dp.Attributes),
+			})
 		}
 	}
 

@@ -46,13 +46,16 @@ type BuildInfo struct {
 // ComponentInfo is a normalised component entry.
 type ComponentInfo struct {
 	ID                   string            `json:"id"`
+	Description          string            `json:"description,omitempty"`
 	Source               string            `json:"source"`
 	SourceDigest         string            `json:"sourceDigest,omitempty"` // sha256:... for remote URL sources
 	SourceSize           int64             `json:"sourceSize,omitempty"`   // bytes, 0 for remote URLs
 	AllowedOutboundHosts []string          `json:"allowedOutboundHosts,omitempty"`
 	KeyValueStores       []string          `json:"keyValueStores,omitempty"`
 	SQLiteDatabases      []string          `json:"sqliteDatabases,omitempty"`
+	AIModels             []string          `json:"aiModels,omitempty"`
 	Variables            map[string]string `json:"variables,omitempty"`
+	Environment          map[string]string `json:"environment,omitempty"`
 	Files                []FileMount       `json:"files,omitempty"`
 	Build                *BuildInfo        `json:"build,omitempty"`
 	Triggers             []TriggerInfo     `json:"triggers,omitempty"`
@@ -278,6 +281,16 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 		}
 	}
 
+	env := map[string]string{}
+	if em := toMap(dm["environment"]); em != nil {
+		for k, v := range em {
+			env[k] = strVal(v)
+		}
+	}
+	if len(env) == 0 {
+		env = nil
+	}
+
 	// files: array of strings or {source, destination} maps
 	var files []FileMount
 	for _, f := range toSlice(dm["files"]) {
@@ -304,12 +317,15 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 
 	return ComponentInfo{
 		ID:                   id,
+		Description:          strVal(dm["description"]),
 		Source:               source,
 		SourceDigest:         sourceDigest,
 		AllowedOutboundHosts: toStringSlice(dm["allowed_outbound_hosts"]),
 		KeyValueStores:       toStringSlice(dm["key_value_stores"]),
 		SQLiteDatabases:      toStringSlice(dm["sqlite_databases"]),
+		AIModels:             toStringSlice(dm["ai_models"]),
 		Variables:            vars,
+		Environment:          env,
 		Files:                files,
 		Build:                build,
 		Triggers:             trigsByComponent[id],
@@ -339,7 +355,7 @@ func parseEnvFile(path string) ([]VarEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var entries []VarEntry
 	scanner := bufio.NewScanner(f)

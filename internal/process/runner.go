@@ -145,7 +145,7 @@ func (r *Runner) pipe(reader io.ReadCloser, stream string, terminal io.Writer) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		r.logFn(stream, line)
-		fmt.Fprintln(terminal, line)
+		_, _ = fmt.Fprintln(terminal, line)
 
 		// Detect spin's listen address announcement, e.g.:
 		//   Serving http://127.0.0.1:3000

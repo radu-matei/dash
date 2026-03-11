@@ -23,7 +23,7 @@ func OpenSQLite(path string) (*SQLiteDB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("pinging sqlite db: %w", err)
 	}
 	return &SQLiteDB{db: db}, nil
@@ -42,7 +42,7 @@ func (s *SQLiteDB) Tables() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tables []string
 	for rows.Next() {
@@ -97,7 +97,7 @@ func (s *SQLiteDB) execQuery(query string) (*QueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	cols, err := rows.Columns()
 	if err != nil {

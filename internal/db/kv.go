@@ -30,7 +30,7 @@ func OpenKV(path string) (*KVDB, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("pinging kv db: %w", err)
 	}
 	return &KVDB{db: db}, nil
@@ -60,7 +60,7 @@ func (k *KVDB) List(store string) ([]KVEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var entries []KVEntry
 	for rows.Next() {
