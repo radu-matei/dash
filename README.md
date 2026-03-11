@@ -56,7 +56,7 @@ Requirements: Go 1.22+, Node.js 20+
 
 ```bash
 # Build the UI and the Go binary
-make build
+make ui build
 
 # Install as a Spin plugin
 make install
