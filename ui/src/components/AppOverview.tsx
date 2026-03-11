@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,13 +14,14 @@ import {
   Layers,
   LayoutList,
   Loader2,
-  MessageSquare,
+  Lock,
   Network,
   Package,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
+  Terminal,
   Trash2,
   X,
   Zap,
@@ -102,19 +103,70 @@ function StatusChip({ status, error }: { status: string; error: string }) {
 
 // ─── Trigger type utils ───────────────────────────────────────────────────────
 
-const TRIGGER_ICONS: Record<string, typeof Globe> = {
-  http:  Globe,
-  redis: MessageSquare,
-  mqtt:  MessageSquare,
-  cron:  Clock,
+// Wrap an Iconify icon name into a component with the same (className) API as
+// a Lucide component so both can be stored in the same map and rendered the
+// same way: <SomeIcon className="w-4 h-4 text-red-500" />
+function iconifyIcon(name: string): React.FC<{ className?: string }> {
+  const C = ({ className }: { className?: string }) => (
+    <Icon icon={name} className={className} />
+  )
+  C.displayName = name
+  return C
+}
+
+interface TriggerMeta {
+  /** Icon component — accepts className, works like a Lucide icon. */
+  icon: React.FC<{ className?: string }>
+  /** Short human-readable label (shown in graph nodes and badges). */
+  label: string
+  /** Tailwind color family used for the topology node and badge. */
+  color: 'green' | 'red' | 'orange' | 'purple' | 'teal' | 'blue' | 'gray'
+}
+
+const TRIGGER_META: Record<string, TriggerMeta> = {
+  http:    { icon: Globe,                                        label: 'HTTP',    color: 'green'  },
+  redis:   { icon: iconifyIcon('simple-icons:redis'),            label: 'Redis',   color: 'red'    },
+  valkey:  { icon: iconifyIcon('simple-icons:valkey'),           label: 'Valkey',  color: 'red'    },
+  mqtt:    { icon: iconifyIcon('simple-icons:mqtt'),             label: 'MQTT',    color: 'teal'   },
+  amqp:    { icon: iconifyIcon('simple-icons:rabbitmq'),         label: 'AMQP',    color: 'orange' },
+  command: { icon: Terminal,                                     label: 'Command', color: 'blue'   },
+  cron:    { icon: Clock,                                        label: 'Cron',    color: 'purple' },
+}
+
+function getTriggerMeta(type: string): TriggerMeta {
+  return TRIGGER_META[type] ?? { icon: Zap, label: type.toUpperCase(), color: 'gray' }
+}
+
+/** Per-color-family Tailwind classes for trigger topology nodes. */
+const TRIGGER_NODE_COLORS: Record<TriggerMeta['color'], {
+  hi: string; sec: string; def: string
+  iconBgHi: string; iconBgDef: string; iconColor: string; labelColor: string
+}> = {
+  green:  { hi: 'bg-green-50 border-2 border-green-400 shadow-md shadow-green-100',    sec: 'bg-green-50/60 border border-green-300 shadow-sm',    def: 'bg-white border border-gray-200 shadow-sm hover:border-green-300 hover:shadow',   iconBgHi: 'bg-green-100 border-green-200',   iconBgDef: 'bg-green-50 border-green-100',   iconColor: 'text-green-600',  labelColor: 'text-green-700'  },
+  red:    { hi: 'bg-red-50 border-2 border-red-400 shadow-md shadow-red-100',          sec: 'bg-red-50/60 border border-red-300 shadow-sm',        def: 'bg-white border border-gray-200 shadow-sm hover:border-red-300 hover:shadow',     iconBgHi: 'bg-red-100 border-red-200',       iconBgDef: 'bg-red-50 border-red-100',       iconColor: 'text-red-600',    labelColor: 'text-red-700'    },
+  orange: { hi: 'bg-orange-50 border-2 border-orange-400 shadow-md shadow-orange-100', sec: 'bg-orange-50/60 border border-orange-300 shadow-sm',  def: 'bg-white border border-gray-200 shadow-sm hover:border-orange-300 hover:shadow', iconBgHi: 'bg-orange-100 border-orange-200', iconBgDef: 'bg-orange-50 border-orange-100', iconColor: 'text-orange-600', labelColor: 'text-orange-700' },
+  purple: { hi: 'bg-purple-50 border-2 border-purple-400 shadow-md shadow-purple-100', sec: 'bg-purple-50/60 border border-purple-300 shadow-sm',  def: 'bg-white border border-gray-200 shadow-sm hover:border-purple-300 hover:shadow', iconBgHi: 'bg-purple-100 border-purple-200', iconBgDef: 'bg-purple-50 border-purple-100', iconColor: 'text-purple-600', labelColor: 'text-purple-700' },
+  teal:   { hi: 'bg-teal-50 border-2 border-teal-400 shadow-md shadow-teal-100',       sec: 'bg-teal-50/60 border border-teal-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-teal-300 hover:shadow',   iconBgHi: 'bg-teal-100 border-teal-200',     iconBgDef: 'bg-teal-50 border-teal-100',     iconColor: 'text-teal-600',   labelColor: 'text-teal-700'   },
+  blue:   { hi: 'bg-blue-50 border-2 border-blue-400 shadow-md shadow-blue-100',       sec: 'bg-blue-50/60 border border-blue-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-blue-300 hover:shadow',   iconBgHi: 'bg-blue-100 border-blue-200',     iconBgDef: 'bg-blue-50 border-blue-100',     iconColor: 'text-blue-600',   labelColor: 'text-blue-700'   },
+  gray:   { hi: 'bg-gray-100 border-2 border-gray-400 shadow-md',                      sec: 'bg-gray-50/60 border border-gray-300 shadow-sm',      def: 'bg-white border border-gray-200 shadow-sm hover:border-gray-400 hover:shadow',   iconBgHi: 'bg-gray-200 border-gray-300',     iconBgDef: 'bg-gray-100 border-gray-200',    iconColor: 'text-gray-500',   labelColor: 'text-gray-600'   },
+}
+
+const TRIGGER_BADGE_CLS: Record<TriggerMeta['color'], string> = {
+  green:  'badge-green',
+  red:    'badge-red',
+  orange: 'badge-orange',
+  purple: 'badge-purple',
+  teal:   'badge-teal',
+  blue:   'badge-blue',
+  gray:   'badge-gray',
 }
 
 function TriggerBadge({ type }: { type: string }) {
-  const Icon = TRIGGER_ICONS[type] ?? Zap
-  const cls = type === 'http' ? 'badge-green' : type === 'redis' || type === 'mqtt' ? 'badge-purple' : 'badge-gray'
+  const meta = getTriggerMeta(type)
+  const TIcon = meta.icon
   return (
-    <span className={`${cls} badge font-mono uppercase`}>
-      <Icon className="w-3 h-3" />{type}
+    <span className={`${TRIGGER_BADGE_CLS[meta.color]} badge font-mono uppercase`}>
+      <TIcon className="w-3 h-3" />{meta.label}
     </span>
   )
 }
@@ -161,14 +213,17 @@ function PaneSection({
 function InfoRow({
   Icon: RowIcon, main, sub, tag, tagColor = 'gray',
 }: {
-  Icon: typeof Layers; main: React.ReactNode; sub?: string; tag?: string; tagColor?: 'gray' | 'green' | 'purple' | 'blue'
+  Icon: React.FC<{ className?: string }>; main: React.ReactNode; sub?: string; tag?: string; tagColor?: 'gray' | 'green' | 'purple' | 'blue' | 'red' | 'orange' | 'teal'
 }) {
-  const tagCls = {
+  const tagCls = ({
     gray:   'bg-gray-100 text-gray-500',
     green:  'bg-green-50 text-green-700',
     purple: 'bg-purple-50 text-purple-700',
     blue:   'bg-blue-50 text-blue-700',
-  }[tagColor]
+    red:    'bg-red-50 text-red-700',
+    orange: 'bg-orange-50 text-orange-700',
+    teal:   'bg-teal-50 text-teal-700',
+  } as Record<string, string>)[tagColor] ?? 'bg-gray-100 text-gray-500'
 
   return (
     <div className="flex items-center gap-3 bg-white border border-gray-200 rounded-xl px-3 py-2.5">
@@ -193,6 +248,25 @@ function hostDescription(h: string): string {
 
 function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClose: () => void }) {
   const { refresh } = useAppStore()
+
+  // ── Drag-to-resize ──────────────────────────────────────────────────────────
+  const [paneWidth, setPaneWidth] = useState(384)      // matches w-96
+  const isDragging  = useRef(false)
+  const dragStartX  = useRef(0)
+  const dragStartW  = useRef(0)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      // Dragging the LEFT edge: moving cursor left → wider
+      const delta = dragStartX.current - e.clientX
+      setPaneWidth(Math.max(260, Math.min(700, dragStartW.current + delta)))
+    }
+    const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
 
   const [deletingBinding, setDeletingBinding] = useState<{ type: 'kv' | 'sqlite'; name: string } | null>(null)
 
@@ -219,7 +293,21 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
   ]
 
   return (
-    <div className="w-96 shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden">
+    <div
+      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
+      style={{ width: paneWidth }}
+    >
+      {/* Drag handle — left edge */}
+      <div
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-blue-300/60 active:bg-blue-400/70 transition-colors"
+        onMouseDown={e => {
+          isDragging.current = true
+          dragStartX.current = e.clientX
+          dragStartW.current = paneWidth
+          document.body.style.cursor = 'col-resize'
+          e.preventDefault()
+        }}
+      />
       {/* ── Header ── */}
       <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
         <div className="min-w-0">
@@ -254,10 +342,23 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
         {c.triggers && c.triggers.length > 0 && (
           <PaneSection title="Triggers" Icon={Zap} count={c.triggers.length}>
             {c.triggers.map((t, i) => {
-              const TIcon = TRIGGER_ICONS[t.type] ?? Zap
+              if (t.private) {
+                return (
+                  <InfoRow key={i} Icon={Lock}
+                    main="Private endpoint"
+                    sub="Internal only · reachable via local service chaining"
+                    tag="Private" tagColor="gray"
+                  />
+                )
+              }
+              const meta  = getTriggerMeta(t.type)
               const route = t.route ?? t.channel ?? t.address ?? '—'
               return (
-                <InfoRow key={i} Icon={TIcon} main={route} sub={`${t.type.toUpperCase()} trigger`} tag={t.type.toUpperCase()} tagColor="green" />
+                <InfoRow key={i} Icon={meta.icon} main={route}
+                  sub={`${meta.label} trigger`}
+                  tag={meta.label.toUpperCase()}
+                  tagColor={meta.color as 'green' | 'red' | 'orange' | 'teal' | 'purple' | 'blue' | 'gray'}
+                />
               )
             })}
           </PaneSection>
@@ -431,11 +532,26 @@ function selectionToActive(s: Selection): ActiveTarget {
   return { kind: 'component', componentId: s.componentId }
 }
 
+/**
+ * Returns true if a component "uses" an app-level variable — either by having
+ * it as a direct binding key OR by referencing it inside a composite value like
+ *   redis_url = "redis://{{ redis_password }}@{{ redis_address }}"
+ */
+function componentUsesVar(c: ComponentInfo, varName: string): boolean {
+  const vars = c.variables ?? {}
+  if (varName in vars) return true
+  // Check mustache references in values: {{ varName }} (with optional spaces)
+  const pattern = new RegExp(`\\{\\{\\s*${varName}\\s*\\}\\}`)
+  return Object.values(vars).some(v => pattern.test(v))
+}
+
 function TopologyGraph({
-  components, triggers, selected, onSelect,
+  components, triggers, variableKeys, selected, onSelect,
 }: {
   components: ComponentInfo[]
   triggers: TriggerInfo[]
+  /** App-level variable names declared in [variables]. */
+  variableKeys: string[]
   selected: Selection | null
   onSelect: (s: Selection | null) => void
 }) {
@@ -458,7 +574,9 @@ function TopologyGraph({
   ]
   const hasResources = resources.length > 0
 
-  const varNames = [...new Set(components.flatMap(c => Object.keys(c.variables ?? {})))]
+  // Use app-level declared variables as nodes. Edges are drawn only to
+  // components that have the variable wired in [component.id.variables].
+  const varNames = variableKeys
   const hasVars  = varNames.length > 0
 
   // Canvas dimensions
@@ -523,7 +641,7 @@ function TopologyGraph({
       // Dim triggers of unrelated components
       const relatedCompIds = active.kind === 'resource'
         ? components.filter(c => (active.resKind === 'kv' ? c.keyValueStores : c.sqliteDatabases ?? [])?.includes(active.resName)).map(c => c.id)
-        : components.filter(c => Object.keys(c.variables ?? {}).includes(active.varName)).map(c => c.id)
+        : components.filter(c => componentUsesVar(c, active.varName)).map(c => c.id)
       return relatedCompIds.includes(compId) ? 'sec' : 'lo'
     }
     return 'lo'
@@ -542,7 +660,7 @@ function TopologyGraph({
     }
     if (active.kind === 'variable') {
       const comp = components.find(c => c.id === compId)
-      return Object.keys(comp?.variables ?? {}).includes(active.varName) ? 'sec' : 'lo'
+      return comp && componentUsesVar(comp, active.varName) ? 'sec' : 'lo'
     }
     return 'lo'
   }
@@ -565,9 +683,8 @@ function TopologyGraph({
     if (!active) return 'normal'
     if (active.kind === 'variable') return active.varName === varName ? 'hi' : 'lo'
     if (active.kind === 'component' || active.kind === 'trigger') {
-      const compId = active.componentId
-      const comp = components.find(c => c.id === compId)
-      return Object.keys(comp?.variables ?? {}).includes(varName) ? 'sec' : 'lo'
+      const comp = components.find(c => c.id === active.componentId)
+      return comp && componentUsesVar(comp, varName) ? 'sec' : 'lo'
     }
     return 'lo'
   }
@@ -608,9 +725,10 @@ function TopologyGraph({
   const VAR_EDGE_X1 = COMP_X + PADDING + NODE_W
   const varEdges: { x1: number; y1: number; x2: number; y2: number; on: boolean }[] = []
   components.forEach((c, ci) => {
-    Object.keys(c.variables ?? {}).forEach(varName => {
-      const vi = varNames.indexOf(varName)
-      if (vi < 0) return
+    // Iterate declared app-level vars; draw an edge wherever the component
+    // uses the var (direct key binding OR mustache reference in a value).
+    varNames.forEach((varName, vi) => {
+      if (!componentUsesVar(c, varName)) return
       varEdges.push({
         x1: VAR_EDGE_X1,     y1: nodeY(cOff, ci)    + NODE_H     / 2,
         x2: VAR_X + PADDING, y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
@@ -674,17 +792,24 @@ function TopologyGraph({
 
         {/* Trigger nodes */}
         {sortedTriggers.map((t, ti) => {
-          const TIcon = TRIGGER_ICONS[t.type] ?? Zap
+          const isPrivate = !!t.private
+          const meta  = isPrivate ? { icon: Lock, label: 'Private', color: 'gray' as const } : getTriggerMeta(t.type)
+          const TIcon = meta.icon
           const state = triggerState(t.component, ti)
           const route = t.route ?? t.channel ?? ''
+
+          const colors   = TRIGGER_NODE_COLORS[meta.color]
+          const hiCls    = colors.hi
+          const secCls   = colors.sec
+          const defCls   = colors.def
+          const iconBg   = state === 'hi' ? colors.iconBgHi : colors.iconBgDef
+          const iconColor  = colors.iconColor
+          const labelColor = colors.labelColor
+
           return (
             <div key={`t-${ti}`}
               className={`absolute flex items-center rounded-xl overflow-hidden cursor-pointer transition-all ${
-                state === 'hi'
-                  ? 'bg-green-50 border-2 border-green-400 shadow-md shadow-green-100'
-                  : state === 'sec'
-                  ? 'bg-green-50/60 border border-green-300 shadow-sm'
-                  : 'bg-white border border-gray-200 shadow-sm hover:border-green-300 hover:shadow'
+                state === 'hi' ? hiCls : state === 'sec' ? secCls : defCls
               }`}
               style={{
                 left: PADDING, top: nodeY(tOff, ti), width: NODE_W, height: NODE_H,
@@ -699,12 +824,16 @@ function TopologyGraph({
               onMouseEnter={() => setHovered({ kind: 'trigger', componentId: t.component, triggerIdx: ti })}
               onMouseLeave={() => setHovered(null)}
             >
-              <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${state === 'hi' ? 'bg-green-100 border-green-200' : 'bg-green-50 border-green-100'}`}>
-                <TIcon className="w-4 h-4 text-green-600" />
+              <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${iconBg}`}>
+                <TIcon className={`w-4 h-4 ${iconColor}`} />
               </div>
               <div className="px-3 min-w-0">
-                <div className="text-xs font-bold text-green-700 uppercase tracking-wide">{t.type}</div>
-                <div className="text-xs text-gray-500 font-mono truncate" title={route}>{route || '—'}</div>
+                <div className={`text-xs font-bold uppercase tracking-wide ${labelColor}`}>
+                  {meta.label}
+                </div>
+                <div className="text-xs text-gray-500 font-mono truncate" title={isPrivate ? 'Internal only' : route}>
+                  {isPrivate ? 'internal only' : (route || '—')}
+                </div>
               </div>
             </div>
           )
@@ -793,7 +922,7 @@ function TopologyGraph({
 
         {/* Variable nodes */}
         {hasVars && varNames.map((varName, vi) => {
-          const usedBy = components.filter(c => Object.keys(c.variables ?? {}).includes(varName))
+          const usedBy = components.filter(c => componentUsesVar(c, varName))
           const state = varState(varName)
           return (
             <div key={`v-${vi}`}
@@ -1072,6 +1201,7 @@ export default function AppOverview() {
                   <TopologyGraph
                     components={components}
                     triggers={triggers}
+                    variableKeys={app?.variableKeys ?? []}
                     selected={selected}
                     onSelect={setSelected}
                   />
@@ -1115,7 +1245,12 @@ export default function AppOverview() {
                         {triggers.map((t, i) => (
                           <tr key={i}>
                             <td><TriggerBadge type={t.type} /></td>
-                            <td><code className="font-mono text-xs text-gray-700">{t.route ?? t.channel ?? t.address ?? '—'}</code></td>
+                            <td>
+                              {t.private
+                                ? <span className="flex items-center gap-1 text-gray-400 text-xs italic"><Lock className="w-3 h-3" /> private endpoint</span>
+                                : <code className="font-mono text-xs text-gray-700">{t.route ?? t.channel ?? t.address ?? '—'}</code>
+                              }
+                            </td>
                             <td><span className="badge badge-gray font-mono">{t.component}</span></td>
                           </tr>
                         ))}

@@ -39,6 +39,8 @@ export interface TriggerInfo {
   channel?: string
   address?: string
   component: string
+  /** True when route = { private = true } — internal-only, no public endpoint. */
+  private?: boolean
 }
 
 export interface FileMount {
@@ -159,10 +161,45 @@ export interface MutationResult {
   message: string
 }
 
-/** Run `spin add -t template name` in the app directory.
- *  `route` is required for HTTP templates and must be unique across triggers. */
-export const addComponent = (template: string, name: string, route: string) =>
-  post<MutationResult>('/api/add-component', { template, name, route })
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+export interface TemplateParam {
+  id: string
+  prompt: string
+  default?: string
+  pattern?: string
+  allowed_values?: string[]
+  /** True for the special "http-path" parameter — the UI shows the
+   *  route input + private-endpoint toggle instead of a plain text field. */
+  is_http_path?: boolean
+}
+
+export interface TemplateInfo {
+  id: string
+  description: string
+  parameters: TemplateParam[]
+}
+
+/** Fetch all installed Spin templates with their parameter definitions.
+ *  Returns an empty array if the templates directory cannot be found. */
+export const fetchTemplates = () => get<TemplateInfo[]>('/api/templates')
+
+/** Run `spin add -t template name --value key=value …` in the app directory.
+ *  `values` maps template parameter IDs to their values.
+ *  Pass `privateEndpoint = true` for the `http-path` parameter to generate
+ *  `route = { private = true }` instead of a public route. */
+export const addComponent = (
+  template: string,
+  name: string,
+  values: Record<string, string>,
+  privateEndpoint?: boolean,
+) =>
+  post<MutationResult>('/api/add-component', {
+    template,
+    name,
+    values,
+    ...(privateEndpoint ? { private: true } : {}),
+  })
 
 /** Add a new variable to [variables] in spin.toml and wire it to the given
  *  components via [component.<id>.variables]. Restarts Spin on success. */

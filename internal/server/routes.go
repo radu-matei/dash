@@ -135,83 +135,111 @@ func addComponentHandler(opts *Options, cfgMu *sync.RWMutex) http.HandlerFunc {
 			return
 		}
 
-		var req struct {
-			Template string `json:"template"`
-			Name     string `json:"name"`
-			Route    string `json:"route"` // required for HTTP templates, e.g. "/api/..."
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			jsonErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-			return
-		}
-		if req.Template == "" || req.Name == "" {
-			jsonErr(w, http.StatusBadRequest, "template and name are required")
-			return
-		}
-		if !validIdentifier(req.Name) {
-			jsonErr(w, http.StatusBadRequest, "name must be lowercase letters, digits, and hyphens only (no spaces)")
-			return
-		}
+	var req struct {
+		Template string            `json:"template"`
+		Name     string            `json:"name"`
+		// Values contains all template parameter values keyed by parameter ID
+		// (e.g. {"http-path": "/api/...", "http-router": "hono"}).
+		// The special key "http-path" is handled separately for route validation.
+		Values  map[string]string `json:"values"`
+		Private bool              `json:"private"` // true → { private = true } route
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if req.Template == "" || req.Name == "" {
+		jsonErr(w, http.StatusBadRequest, "template and name are required")
+		return
+	}
+	if !validIdentifier(req.Name) {
+		jsonErr(w, http.StatusBadRequest, "name must be lowercase letters, digits, and hyphens only (no spaces)")
+		return
+	}
+	if req.Values == nil {
+		req.Values = map[string]string{}
+	}
 
-		// Validate the HTTP route.
-		needsRoute := isHTTPTemplate(req.Template)
-		if needsRoute {
-			if req.Route == "" {
-				jsonErr(w, http.StatusBadRequest, "route is required for HTTP templates (e.g. /api/...)")
-				return
-			}
-			if !strings.HasPrefix(req.Route, "/") {
-				jsonErr(w, http.StatusBadRequest, "route must start with /")
-				return
-			}
-		}
+	// Detect whether this is an HTTP template by checking for http-path in
+	// the template parameters (more reliable than template name prefix).
+	httpRoute := req.Values["http-path"]
+	isHTTP := httpRoute != "" || req.Private || isHTTPTemplate(req.Template)
 
-		// Guard: component name must be unique.
-		cfgMu.RLock()
-		for _, c := range opts.Cfg.Components {
-			if c.ID == req.Name {
+	// Validate the HTTP route (only required for non-private HTTP templates).
+	if isHTTP && !req.Private {
+		if httpRoute == "" {
+			jsonErr(w, http.StatusBadRequest, "http-path is required for HTTP templates (e.g. /api/...)")
+			return
+		}
+		if !strings.HasPrefix(httpRoute, "/") {
+			jsonErr(w, http.StatusBadRequest, "http-path must start with /")
+			return
+		}
+	}
+
+	// Guard: component name must be unique.
+	cfgMu.RLock()
+	for _, c := range opts.Cfg.Components {
+		if c.ID == req.Name {
+			cfgMu.RUnlock()
+			jsonErr(w, http.StatusConflict,
+				fmt.Sprintf("component %q already exists in spin.toml", req.Name))
+			return
+		}
+	}
+	// Guard: public HTTP route must not conflict with an existing trigger route.
+	if isHTTP && !req.Private && httpRoute != "" {
+		for _, t := range opts.Cfg.Triggers {
+			if t.Type == "http" && t.Route == httpRoute {
 				cfgMu.RUnlock()
 				jsonErr(w, http.StatusConflict,
-					fmt.Sprintf("component %q already exists in spin.toml", req.Name))
+					fmt.Sprintf("HTTP route %q is already used by component %q — choose a different route", httpRoute, t.Component))
 				return
 			}
 		}
-		// Guard: HTTP route must not conflict with an existing trigger route.
-		if needsRoute {
-			for _, t := range opts.Cfg.Triggers {
-				if t.Type == "http" && t.Route == req.Route {
-					cfgMu.RUnlock()
-					jsonErr(w, http.StatusConflict,
-						fmt.Sprintf("HTTP route %q is already used by component %q — choose a different route", req.Route, t.Component))
-					return
-				}
-			}
-		}
-		cfgMu.RUnlock()
+	}
+	cfgMu.RUnlock()
 
-		// Build the `spin add` command, injecting the route via --value so
-		// the generated [[trigger.http]] uses the caller-supplied path instead
-		// of the template default (/...).
-		args := []string{"add", "-t", req.Template, req.Name, "--accept-defaults", "--no-vcs"}
-		if needsRoute {
-			args = append(args, "--value", "http-path="+req.Route)
+	// For private HTTP endpoints, spin add needs a temporary placeholder route
+	// (it cannot write { private = true } itself).  We patch spin.toml
+	// immediately after spin add completes.
+	if req.Private {
+		req.Values["http-path"] = "/_dash_private_" + req.Name + "_"
+	}
+
+	// Build the `spin add` command. Pass all template parameter values as
+	// --value key=value pairs, and use --accept-defaults for any not supplied.
+	args := []string{"add", "-t", req.Template, req.Name, "--accept-defaults", "--no-vcs"}
+	for k, v := range req.Values {
+		if v != "" {
+			args = append(args, "--value", k+"="+v)
 		}
+	}
 
 		cmd := exec.Command(opts.SpinBin, args...)
 		cmd.Dir = opts.Dir
 		cmd.Env = append(os.Environ(), "NO_COLOR=1")
 
-		out, err := cmd.CombinedOutput()
-		if err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError,
+			fmt.Sprintf("spin add failed: %v\n%s", err, strings.TrimSpace(string(out))))
+		return
+	}
+
+	// For private endpoints, rewrite the placeholder route to { private = true }.
+	if req.Private {
+		if patchErr := config.PatchRouteToPrivate(opts.Dir, req.Name); patchErr != nil {
 			jsonErr(w, http.StatusInternalServerError,
-				fmt.Sprintf("spin add failed: %v\n%s", err, strings.TrimSpace(string(out))))
+				fmt.Sprintf("spin add succeeded but could not patch private route: %v", patchErr))
 			return
 		}
+	}
 
-		// Reload cfg so /api/app reflects the new component immediately.
-		cfgMu.Lock()
-		_ = opts.Cfg.Reload(opts.EnvOverrides, opts.CliOverrides)
-		cfgMu.Unlock()
+	// Reload cfg so /api/app reflects the new component immediately.
+	cfgMu.Lock()
+	_ = opts.Cfg.Reload(opts.EnvOverrides, opts.CliOverrides)
+	cfgMu.Unlock()
 
 		// Run `spin build` in the background, streaming output to the log hub,
 		// then restart `spin up` so the new component is live.
@@ -597,6 +625,27 @@ func addComponentVariableHandler(opts *Options, cfgMu *sync.RWMutex) http.Handle
 		jsonOK(w, map[string]string{
 			"message": fmt.Sprintf("Variable %q wired to component %q. Spin is restarting.", req.VarName, req.ComponentID),
 		})
+	}
+}
+
+// ── Templates ─────────────────────────────────────────────────────────────────
+
+// templatesHandler serves GET /api/templates.
+// It scans the Spin template data directory and returns all installed
+// templates with their user-facing parameters, so the UI can render a fully
+// dynamic "Add Component" form instead of a hardcoded list.
+func templatesHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			jsonErr(w, http.StatusMethodNotAllowed, "GET required")
+			return
+		}
+		templates, err := config.DiscoverTemplates()
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "discovering templates: "+err.Error())
+			return
+		}
+		jsonOK(w, templates)
 	}
 }
 

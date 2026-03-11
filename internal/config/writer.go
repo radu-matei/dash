@@ -437,3 +437,75 @@ func appendToTOMLArray(line, name string) (string, bool) {
 
 	return line[:openIdx+1] + strings.Join(quoted, ", ") + line[closeIdx:], true
 }
+
+// PatchRouteToPrivate rewrites the [[trigger.http]] entry whose component field
+// matches componentID so that its route becomes { private = true }, enabling
+// local service chaining for the component.
+//
+// This is called after `spin add` creates an HTTP component with a temporary
+// placeholder route.  The function uses a two-pass approach: first it locates
+// all [[trigger.http]] block ranges, then within the matching block it replaces
+// the route line in-place, preserving all surrounding formatting.
+func PatchRouteToPrivate(dir, componentID string) error {
+	path := dir + "/spin.toml"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading spin.toml: %w", err)
+	}
+
+	lines := strings.Split(string(raw), "\n")
+
+	// Collect the line ranges of every [[trigger.http]] block.
+	type block struct{ start, end int }
+	var blocks []block
+	inHTTP := false
+	start := 0
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "[[trigger.http]]" {
+			if inHTTP {
+				blocks = append(blocks, block{start, i - 1})
+			}
+			inHTTP = true
+			start = i
+		} else if inHTTP && strings.HasPrefix(trimmed, "[[") {
+			blocks = append(blocks, block{start, i - 1})
+			inHTTP = false
+		}
+	}
+	if inHTTP {
+		blocks = append(blocks, block{start, len(lines) - 1})
+	}
+
+	// Find the block that owns componentID and patch its route line.
+	wantComponent := fmt.Sprintf("%q", componentID)
+	for _, b := range blocks {
+		hasComp := false
+		routeLine := -1
+		for i := b.start; i <= b.end; i++ {
+			trimmed := strings.TrimSpace(lines[i])
+			if trimmed == "component = "+wantComponent {
+				hasComp = true
+			}
+			if strings.HasPrefix(trimmed, "route ") || strings.HasPrefix(trimmed, "route=") {
+				routeLine = i
+			}
+		}
+		if !hasComp || routeLine < 0 {
+			continue
+		}
+		// Preserve any leading whitespace on the original route line.
+		indent := ""
+		for _, ch := range lines[routeLine] {
+			if ch == ' ' || ch == '\t' {
+				indent += string(ch)
+			} else {
+				break
+			}
+		}
+		lines[routeLine] = indent + "route = { private = true }"
+		return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0644)
+	}
+
+	return fmt.Errorf("no [[trigger.http]] block found for component %q in spin.toml", componentID)
+}

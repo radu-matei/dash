@@ -30,20 +30,14 @@ type TriggerInfo struct {
 	Channel   string `json:"channel,omitempty"`
 	Address   string `json:"address,omitempty"`
 	Component string `json:"component"`
+	// Private is true when the trigger uses route = { private = true }.
+	// Such components have no public HTTP endpoint and are reachable only
+	// via local service chaining from within the same Spin application.
+	Private bool `json:"private,omitempty"`
 }
 
-// FileMount represents one entry in a component's files array.
-type FileMount struct {
-	Source      string `json:"source"`
-	Destination string `json:"destination,omitempty"`
-}
-
-// BuildInfo holds the optional [component.id.build] section.
-type BuildInfo struct {
-	Command string   `json:"command,omitempty"`
-	Workdir string   `json:"workdir,omitempty"`
-	Watch   []string `json:"watch,omitempty"`
-}
+// FileMount and BuildConfig (previously BuildInfo) are now defined in
+// manifest.go as part of the full manifest type reference.
 
 // ComponentInfo is a normalised component entry.
 type ComponentInfo struct {
@@ -59,7 +53,7 @@ type ComponentInfo struct {
 	Variables            map[string]string `json:"variables,omitempty"`
 	Environment          map[string]string `json:"environment,omitempty"`
 	Files                []FileMount       `json:"files,omitempty"`
-	Build                *BuildInfo        `json:"build,omitempty"`
+	Build                *BuildConfig      `json:"build,omitempty"`
 	Triggers             []TriggerInfo     `json:"triggers,omitempty"`
 }
 
@@ -250,17 +244,30 @@ func decodeSpinTOML(path string) (
 	if trigRaw, ok := raw["trigger"]; ok {
 		if trigMap := toMap(trigRaw); trigMap != nil {
 			for trigType, entries := range trigMap {
-				for _, entry := range toSlice(entries) {
-					if em := toMap(entry); em != nil {
-						triggers = append(triggers, TriggerInfo{
-							Type:      trigType,
-							Route:     strVal(em["route"]),
-							Channel:   strVal(em["channel"]),
-							Address:   strVal(em["address"]),
-							Component: strVal(em["component"]),
-						})
+			for _, entry := range toSlice(entries) {
+				if em := toMap(entry); em != nil {
+					// route may be a string ("/foo/...") or a table ({ private = true }).
+					route := ""
+					private := false
+					if routeRaw, ok := em["route"]; ok {
+						if s, ok := routeRaw.(string); ok {
+							route = s
+						} else if routeMap := toMap(routeRaw); routeMap != nil {
+							if p, _ := routeMap["private"].(bool); p {
+								private = true
+							}
+						}
 					}
+					triggers = append(triggers, TriggerInfo{
+						Type:      trigType,
+						Route:     route,
+						Channel:   strVal(em["channel"]),
+						Address:   strVal(em["address"]),
+						Component: strVal(em["component"]),
+						Private:   private,
+					})
 				}
+			}
 			}
 		}
 	}
@@ -347,7 +354,7 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 	for _, f := range toSlice(dm["files"]) {
 		switch fv := f.(type) {
 		case string:
-			files = append(files, FileMount{Source: fv})
+			files = append(files, FileMount{Glob: fv})
 		case map[string]interface{}:
 			files = append(files, FileMount{
 				Source:      strVal(fv["source"]),
@@ -357,9 +364,9 @@ func extractComponent(id string, dm map[string]interface{}, trigsByComponent map
 	}
 
 	// [component.id.build]
-	var build *BuildInfo
+	var build *BuildConfig
 	if bm := toMap(dm["build"]); bm != nil {
-		build = &BuildInfo{
+		build = &BuildConfig{
 			Command: strVal(bm["command"]),
 			Workdir: strVal(bm["workdir"]),
 			Watch:   toStringSlice(bm["watch"]),

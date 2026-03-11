@@ -51,6 +51,7 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/vars", varsHandler(opts.Cfg, cfgMu))
 	mux.HandleFunc("/api/traces", tracesHandler(opts.OTel))
 	mux.HandleFunc("/api/otel-metrics", otelMetricsHandler(opts.OTelMetrics))
+	mux.HandleFunc("/api/templates", templatesHandler())
 
 	// --- Mutation routes ---
 	mux.HandleFunc("/api/spin-toml", spinTomlHandler(&opts, cfgMu))
