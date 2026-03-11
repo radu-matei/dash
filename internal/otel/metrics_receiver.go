@@ -1,8 +1,10 @@
 package otel
 
 import (
+	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,15 +31,29 @@ type MetricSeries struct {
 }
 
 // MetricsReceiver stores OTel metrics exported by the Spin app.
+// If forwardTo is non-empty, raw payloads are also forwarded there
+// asynchronously so a central backend can see metrics from all running apps.
 type MetricsReceiver struct {
-	mu     sync.RWMutex
-	series map[string]*MetricSeries
-	maxPts int
+	mu        sync.RWMutex
+	series    map[string]*MetricSeries
+	maxPts    int
+	forwardTo string
+	client    *http.Client
 }
 
 // NewMetricsReceiver creates a ready MetricsReceiver.
-func NewMetricsReceiver(maxPts int) *MetricsReceiver {
-	return &MetricsReceiver{series: make(map[string]*MetricSeries), maxPts: maxPts}
+// forwardTo is an optional base URL (e.g. "http://localhost:4317") to forward
+// raw OTLP payloads to; empty string disables forwarding.
+func NewMetricsReceiver(maxPts int, forwardTo string) *MetricsReceiver {
+	r := &MetricsReceiver{
+		series:    make(map[string]*MetricSeries),
+		maxPts:    maxPts,
+		forwardTo: strings.TrimRight(forwardTo, "/"),
+	}
+	if forwardTo != "" {
+		r.client = &http.Client{Timeout: 5 * time.Second}
+	}
+	return r
 }
 
 // HandleOTLP is the HTTP handler for POST /v1/metrics.
@@ -47,11 +63,32 @@ func (r *MetricsReceiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
+	// Forward raw payload to upstream collector before parsing.
+	if r.forwardTo != "" {
+		go r.forward(r.forwardTo+"/v1/metrics", req.Header.Get("Content-Type"), body)
+	}
 	// Always attempt protobuf decoding — the Spin OTel SDK always sends
 	// application/x-protobuf, but we don't gate on the content-type so that
 	// minor header variations (e.g. extra params) don't silently drop metrics.
 	r.parseProto(body)
 	w.WriteHeader(http.StatusOK)
+}
+
+// forward fires a best-effort POST of body to url.  Errors are silenced —
+// a slow or unavailable upstream must never stall the local Spin app.
+func (r *MetricsReceiver) forward(url, contentType string, body []byte) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
 
 // Series returns a snapshot of all received metric series.
