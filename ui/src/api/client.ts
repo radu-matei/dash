@@ -121,6 +121,13 @@ export interface Span {
   durationMs: number
   status: 'OK' | 'ERROR'
   attrs?: Record<string, string>
+  events?: SpanEvent[]
+}
+
+export interface MetricPoint {
+  timestamp: string
+  value: number
+  attrs?: Record<string, string>
 }
 
 export const getTraces = (signal?: AbortSignal) => get<Span[]>('/api/traces', signal)
@@ -153,9 +160,9 @@ export const execSQLite = (sql: string) =>
 
 // ── OTel metrics ──────────────────────────────────────────────────────────────
 
-export interface MetricPoint {
-  timestamp: string
-  value: number
+export interface SpanEvent {
+  timeMs: number
+  name: string
   attrs?: Record<string, string>
 }
 

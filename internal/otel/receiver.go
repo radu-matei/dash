@@ -20,6 +20,13 @@ import (
 // Large enough that within a typical local dev session spans never roll off.
 const maxSpans = 10_000
 
+// SpanEvent is a timestamped event attached to a span (OTel span event / Jaeger log).
+type SpanEvent struct {
+	TimeMs int64             `json:"timeMs"`
+	Name   string            `json:"name"`
+	Attrs  map[string]string `json:"attrs,omitempty"`
+}
+
 // Span is a simplified representation of an OTel span for the dashboard UI.
 type Span struct {
 	TraceID   string            `json:"traceId"`
@@ -31,6 +38,7 @@ type Span struct {
 	Duration  int64             `json:"durationMs"` // milliseconds
 	Status    string            `json:"status"`
 	Attrs     map[string]string `json:"attrs,omitempty"`
+	Events    []SpanEvent       `json:"events,omitempty"`
 }
 
 // Receiver is a lightweight OTLP/HTTP trace receiver that accepts both
@@ -181,6 +189,17 @@ func resourceSpansToSpans(rs *tracepb.ResourceSpans) []Span {
 				spanComponent = c
 			}
 
+			// Parse span events (embedded logs from Spin components via tracing::event!).
+			var events []SpanEvent
+			for _, e := range s.Events {
+				ev := SpanEvent{
+					TimeMs: int64(e.TimeUnixNano) / 1_000_000,
+					Name:   e.Name,
+					Attrs:  attrsMap(e.Attributes),
+				}
+				events = append(events, ev)
+			}
+
 			spans = append(spans, Span{
 				TraceID:   hex.EncodeToString(s.TraceId),
 				SpanID:    hex.EncodeToString(s.SpanId),
@@ -191,6 +210,7 @@ func resourceSpansToSpans(rs *tracepb.ResourceSpans) []Span {
 				Duration:  durationMs,
 				Status:    status,
 				Attrs:     attrs,
+				Events:    events,
 			})
 		}
 	}
@@ -316,6 +336,7 @@ func parseOTLPJSON(data []byte) ([]Span, error) {
 					Duration:  durationMs,
 					Status:    status,
 					Attrs:     attrs,
+					// JSON format does not include events in this simplified parser.
 				})
 			}
 		}

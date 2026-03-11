@@ -61,10 +61,14 @@ function groupTraces(spans: Span[], routeMap: Map<string, string>): TraceGroup[]
     const durationMs = Math.max(endMs - startMs, root?.durationMs ?? 0)
     const rootAttrs = root?.attrs ?? {}
     // Spin doesn't set component_id on trace spans (only on metrics).
-    // The root HTTP span has http.route which we can map to a component via the app manifest.
+    // Priority: http.route→manifest lookup, then "execute_wasm_component {id}" span name,
+    // then any non-generic component value, then resource service.name.
     const httpRoute = rootAttrs['http.route']
+    const execSpan = sorted.find(s => s.name?.startsWith('execute_wasm_component '))
+    const execComponent = execSpan ? execSpan.name.slice('execute_wasm_component '.length).trim() : null
     const component =
       (httpRoute && routeMap.get(httpRoute)) ??
+      execComponent ??
       sorted.find(s => s.component && s.component !== 'spin')?.component ??
       root?.component ?? ''
     return {
@@ -127,8 +131,24 @@ function fmtTime(ms: number): string {
 
 // ─── Span attributes panel ────────────────────────────────────────────────────
 
-// Well-known OTel attrs to highlight prominently
-const KEY_ATTRS = ['http.method','http.url','http.route','http.status_code','rpc.method','db.statement','error.message','exception.message','exception.type']
+// Well-known OTel attrs to highlight prominently in span detail
+const KEY_ATTRS = [
+  'http.method', 'http.url', 'http.route', 'http.status_code',
+  'rpc.method', 'db.statement', 'db.system',
+  'error.message', 'exception.message', 'exception.type',
+  'span.kind', 'key', 'command',
+]
+// Attrs that are low-signal noise for end users
+const SKIP_ATTRS = new Set(['busy_ns', 'idle_ns', 'code.filepath', 'code.lineno', 'code.namespace', 'otel.scope.name'])
+
+const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]/g
+const stripAnsi = (s: string) => s.replace(ANSI_RE, '')
+
+function fmtNs(ns: number): string {
+  if (ns < 1_000) return `${ns}ns`
+  if (ns < 1_000_000) return `${(ns / 1_000).toFixed(1)}μs`
+  return `${(ns / 1_000_000).toFixed(2)}ms`
+}
 
 function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map<string, string>; onClose: () => void }) {
   const { span } = node
@@ -136,9 +156,12 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
   const color = colorMap.get(span.component ?? '') ?? '#6b7280'
   const attrs = span.attrs ?? {}
   const keyAttrs = KEY_ATTRS.filter(k => attrs[k])
-  const otherAttrs = Object.entries(attrs).filter(([k]) => !KEY_ATTRS.includes(k))
+  const otherAttrs = Object.entries(attrs).filter(([k]) => !KEY_ATTRS.includes(k) && !SKIP_ATTRS.has(k))
   const httpStatus = attrs['http.response.status_code'] ?? attrs['http.status_code']
   const isStatusError = httpStatus && Number(httpStatus) >= 400
+  const busyNs = attrs['busy_ns'] ? Number(attrs['busy_ns']) : null
+  const idleNs = attrs['idle_ns'] ? Number(attrs['idle_ns']) : null
+  const events = span.events ?? []
 
   return (
     <div className="border-t border-gray-200 bg-white text-xs flex flex-col max-h-72 overflow-y-auto">
@@ -194,8 +217,40 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
         </div>
       )}
 
-      {Object.keys(attrs).length === 0 && (
+      {Object.keys(attrs).length === 0 && events.length === 0 && (
         <p className="px-4 py-3 text-gray-400 italic">No attributes recorded for this span.</p>
+      )}
+
+      {/* CPU busy / idle breakdown */}
+      {busyNs !== null && idleNs !== null && (
+        <div className="px-4 py-2 border-t border-gray-100 flex gap-6 text-xs">
+          <span className="text-gray-500">CPU busy: <strong className="text-gray-800 font-mono">{fmtNs(busyNs)}</strong></span>
+          <span className="text-gray-500">Waiting: <strong className="text-gray-800 font-mono">{fmtNs(idleNs)}</strong></span>
+        </div>
+      )}
+
+      {/* Span events (embedded logs from tracing::event!) */}
+      {events.length > 0 && (
+        <div className="px-4 py-2 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 mb-1.5">Events ({events.length})</p>
+          <div className="space-y-1.5">
+            {events.map((ev, i) => {
+              const appLog = ev.attrs?.['app_log']
+              const msg = appLog ? stripAnsi(appLog).trim() : (ev.attrs?.['event'] ?? ev.name)
+              const level = ev.attrs?.['level']
+              const levelColor = level === 'ERROR' ? 'text-red-600' : level === 'WARN' ? 'text-amber-600' : 'text-gray-500'
+              return (
+                <div key={i} className="flex gap-2 text-xs font-mono">
+                  <span className="text-gray-300 shrink-0 tabular-nums">
+                    {new Date(ev.timeMs).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  </span>
+                  {level && <span className={`shrink-0 font-semibold ${levelColor}`}>{level}</span>}
+                  <span className="text-gray-700 break-all whitespace-pre-wrap">{msg}</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
       )}
     </div>
   )
