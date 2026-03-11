@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +16,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const maxTraces = 500
+// maxSpans is the in-memory cap for spans within a session.
+// Large enough that within a typical local dev session spans never roll off.
+const maxSpans = 10_000
 
 // Span is a simplified representation of an OTel span for the dashboard UI.
 type Span struct {
@@ -79,8 +82,8 @@ func (r *Receiver) HandleOTLP(w http.ResponseWriter, req *http.Request) {
 	if err == nil && len(spans) > 0 {
 		r.mu.Lock()
 		r.spans = append(r.spans, spans...)
-		if len(r.spans) > maxTraces {
-			r.spans = r.spans[len(r.spans)-maxTraces:]
+		if len(r.spans) > maxSpans {
+			r.spans = r.spans[len(r.spans)-maxSpans:]
 		}
 		r.mu.Unlock()
 	}
@@ -156,6 +159,11 @@ func resourceSpansToSpans(rs *tracepb.ResourceSpans) []Span {
 			if s.Status != nil && s.Status.Code == tracepb.Status_STATUS_CODE_ERROR {
 				status = "ERROR"
 			}
+			// Spin doesn't always set Status.Code for HTTP errors; infer from the
+			// http.response.status_code attribute (>= 400 → error).
+			if status == "OK" {
+				status = inferHTTPStatus(attrs)
+			}
 
 			// Trim all-zero parent IDs (root spans).
 			parentID := hex.EncodeToString(s.ParentSpanId)
@@ -177,6 +185,16 @@ func resourceSpansToSpans(rs *tracepb.ResourceSpans) []Span {
 		}
 	}
 	return spans
+}
+
+// inferHTTPStatus returns "ERROR" when the attrs map contains an
+// http.response.status_code >= 400, signalling an HTTP-level error even when
+// the OTel span Status.Code was not explicitly set to ERROR (common with Spin).
+func inferHTTPStatus(attrs map[string]string) string {
+	if code, err := strconv.Atoi(attrs["http.response.status_code"]); err == nil && code >= 400 {
+		return "ERROR"
+	}
+	return "OK"
 }
 
 func isZeroHex(s string) bool {
@@ -205,12 +223,16 @@ func attrStringKV(kv *commonpb.KeyValue) string {
 	case *commonpb.AnyValue_StringValue:
 		return v.StringValue
 	case *commonpb.AnyValue_IntValue:
-		return strings.TrimSpace(strings.Replace(string(rune(v.IntValue)), "\x00", "", -1))
+		return strconv.FormatInt(v.IntValue, 10)
+	case *commonpb.AnyValue_DoubleValue:
+		return strconv.FormatFloat(v.DoubleValue, 'f', -1, 64)
 	case *commonpb.AnyValue_BoolValue:
 		if v.BoolValue {
 			return "true"
 		}
 		return "false"
+	case *commonpb.AnyValue_BytesValue:
+		return hex.EncodeToString(v.BytesValue)
 	}
 	return ""
 }
@@ -260,10 +282,13 @@ func parseOTLPJSON(data []byte) ([]Span, error) {
 						attrs[kv.Key] = v
 					}
 				}
-				status := "OK"
-				if s.Status.Code == 2 {
-					status = "ERROR"
-				}
+			status := "OK"
+			if s.Status.Code == 2 {
+				status = "ERROR"
+			}
+			if status == "OK" {
+				status = inferHTTPStatus(attrs)
+			}
 				spans = append(spans, Span{
 					TraceID:   s.TraceID,
 					SpanID:    s.SpanID,

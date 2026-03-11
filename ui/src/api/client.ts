@@ -1,7 +1,7 @@
 const BASE = ''
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`)
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, signal ? { signal } : undefined)
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(body.error ?? res.statusText)
@@ -85,9 +85,10 @@ export interface AppInfo {
   components: ComponentInfo[]
   triggers: TriggerInfo[]
   varCount: number
+  listenAddr?: string
 }
 
-export const getApp = () => get<AppInfo>('/api/app')
+export const getApp = (signal?: AbortSignal) => get<AppInfo>('/api/app', signal)
 
 // ── Logs ──────────────────────────────────────────────────────────────────────
 
@@ -122,14 +123,14 @@ export interface Span {
   attrs?: Record<string, string>
 }
 
-export const getTraces = () => get<Span[]>('/api/traces')
+export const getTraces = (signal?: AbortSignal) => get<Span[]>('/api/traces', signal)
 
 // ── Variables ─────────────────────────────────────────────────────────────────
 
 export interface VarEntry {
   key: string
   value: string
-  source: 'spin.toml' | '.env'
+  source: 'spin.toml' | '.env' | 'SPIN_VARIABLE' | '--variable'
   secret: boolean
 }
 
@@ -166,7 +167,7 @@ export interface MetricSeries {
   points: MetricPoint[]
 }
 
-export const getOtelMetrics = () => get<Record<string, MetricSeries>>('/api/otel-metrics')
+export const getOtelMetrics = (signal?: AbortSignal) => get<Record<string, MetricSeries>>('/api/otel-metrics', signal)
 
 // ── KV Store ──────────────────────────────────────────────────────────────────
 

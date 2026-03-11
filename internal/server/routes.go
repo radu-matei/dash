@@ -43,6 +43,13 @@ func statusHandler(runner *process.Runner) http.HandlerFunc {
 // appHandler returns the full application structure (components, triggers, vars, status).
 func appHandler(cfg *config.AppConfig, runner *process.Runner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Prefer the address spin announced at runtime ("Serving http://...") over
+		// the static address derived from the --listen flag, since spin may not
+		// have been started with an explicit --listen.
+		listenAddr := runner.ListenAddr()
+		if listenAddr == "" {
+			listenAddr = cfg.ListenAddr
+		}
 		jsonOK(w, map[string]interface{}{
 			"name":        cfg.Name,
 			"description": cfg.Description,
@@ -51,6 +58,7 @@ func appHandler(cfg *config.AppConfig, runner *process.Runner) http.HandlerFunc 
 			"components":  cfg.Components,
 			"triggers":    cfg.Triggers,
 			"varCount":    len(cfg.Variables),
+			"listenAddr":  listenAddr,
 		})
 	}
 }

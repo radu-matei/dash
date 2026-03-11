@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowDown, Clock, Search, Trash2, X } from 'lucide-react'
+import { ArrowDown, Braces, ChevronDown, ChevronRight, Clock, Search, Trash2, X } from 'lucide-react'
 import { useLogStore } from '../store/logContext'
 import type { LogLine } from '../api/client'
 
@@ -139,6 +139,191 @@ function HttpCell({ l }: { l: ParsedLine }) {
   )
 }
 
+// ─── JSON detection & grouping ────────────────────────────────────────────────
+
+interface NormalGroup { type: 'normal'; line: ParsedLine }
+interface JsonGroup   { type: 'json';   lines: ParsedLine[]; parsed: unknown; prefix: string }
+type RenderGroup = NormalGroup | JsonGroup
+
+/** Try to extract a JSON value from msg. Returns the parsed object and any non-JSON prefix.
+ *
+ * Scans left-to-right for the first `{` or `[` from which the remainder of the
+ * string is valid JSON.  This handles all of:
+ *   - full-line JSON:            `{"key": 1}`
+ *   - after a separator:        `Error: {"code": 401}`
+ *   - after any prefix text:    `[ADK INFO] event: {...}`
+ *   - nested JSON in text:      `failed (401): {"error": {...}}`
+ */
+function extractInlineJSON(msg: string): { parsed: unknown; prefix: string } | null {
+  const trimmed = msg.trim()
+  for (let i = 0; i < trimmed.length; i++) {
+    const c = trimmed[i]
+    if (c !== '{' && c !== '[') continue
+    try {
+      const parsed = JSON.parse(trimmed.slice(i))
+      return { parsed, prefix: trimmed.slice(0, i).trimEnd() }
+    } catch { /* not valid JSON from here; keep scanning */ }
+  }
+  return null
+}
+
+/**
+ * Group consecutive ParsedLines into render groups.
+ * Lines that together form a valid JSON value are coalesced into a JsonGroup
+ * so they can be rendered as formatted JSON rather than raw text fragments.
+ */
+function buildRenderGroups(lines: ParsedLine[]): RenderGroup[] {
+  const groups: RenderGroup[] = []
+  let i = 0
+
+  while (i < lines.length) {
+    const line = lines[i]
+    const msg  = line.message.trim()
+
+    // 1. Single-line or inline JSON
+    const inline = extractInlineJSON(msg)
+    if (inline) {
+      groups.push({ type: 'json', lines: [line], ...inline })
+      i++
+      continue
+    }
+
+    // 2. Multi-line JSON block: the line ends with a bare `{` or `[`.
+    //    Covers both a bare `{` on its own AND lines like
+    //    "Memory Bank failed (401): {" where JSON starts after some prefix text.
+    const lastChar = msg[msg.length - 1]
+    if (lastChar === '{' || lastChar === '[') {
+      // Find the JSON start: position of the last `{` or `[` in the line.
+      const braceAt   = msg.lastIndexOf('{')
+      const bracketAt = msg.lastIndexOf('[')
+      const jsonAt    = Math.max(braceAt, bracketAt)
+
+      let accumulated = msg.slice(jsonAt)   // opening brace/bracket onward
+      let depth = 1
+      let j = i + 1
+      const MAX_LINES = 500
+
+      while (j < lines.length && depth > 0 && j - i < MAX_LINES) {
+        const next = lines[j].message
+        for (const c of next) {
+          if (c === '{' || c === '[') depth++
+          else if (c === '}' || c === ']') depth--
+        }
+        accumulated += '\n' + next
+        j++
+        if (depth === 0) break
+      }
+
+      if (depth === 0) {
+        try {
+          const parsed = JSON.parse(accumulated)
+          const prefix = msg.slice(0, jsonAt).trimEnd()
+          groups.push({ type: 'json', lines: lines.slice(i, j), parsed, prefix })
+          i = j
+          continue
+        } catch { /* accumulated text wasn't valid JSON; fall through */ }
+      }
+    }
+
+    groups.push({ type: 'normal', line })
+    i++
+  }
+
+  return groups
+}
+
+// ─── JSON syntax highlighting ─────────────────────────────────────────────────
+
+/** Colorise a JSON.stringify output string with spans. Pure regex — no tree walk. */
+function colorizeJSON(json: string): React.ReactNode {
+  // Split on tokens we care about, keeping the delimiters
+  const TOKEN_RE = /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b|\bnull\b)/g
+  const parts: React.ReactNode[] = []
+  let last = 0
+  let match: RegExpExecArray | null
+
+  while ((match = TOKEN_RE.exec(json)) !== null) {
+    if (match.index > last) parts.push(json.slice(last, match.index))
+    const [full, strToken, colon, numToken, kwToken] = match
+    if (strToken !== undefined) {
+      if (colon) {
+        // It's a key
+        parts.push(<span key={match.index} className="text-blue-600">{strToken}</span>)
+        parts.push(colon)
+      } else {
+        parts.push(<span key={match.index} className="text-green-700">{strToken}</span>)
+      }
+    } else if (numToken !== undefined) {
+      parts.push(<span key={match.index} className="text-orange-600">{numToken}</span>)
+    } else if (kwToken !== undefined) {
+      parts.push(<span key={match.index} className="text-purple-600">{kwToken}</span>)
+    } else {
+      parts.push(full)
+    }
+    last = match.index + full.length
+  }
+  if (last < json.length) parts.push(json.slice(last))
+  return <>{parts}</>
+}
+
+// ─── JsonBlock component ──────────────────────────────────────────────────────
+
+function JsonBlock({ group }: { group: JsonGroup }) {
+  const first = group.lines[0]
+  const pretty = JSON.stringify(group.parsed, null, 2)
+  const lineCount = pretty.split('\n').length
+  const [open, setOpen] = useState(lineCount <= 6)
+
+  const rowCls = first.level ? LEVEL_ROW[first.level] : ''
+
+  return (
+    <div className={`border-b border-gray-50 ${rowCls}`}>
+      {/* Metadata row — same layout as normal lines */}
+      <div
+        className="flex items-start px-4 py-px leading-5 hover:bg-gray-50/70 transition-colors cursor-pointer select-none"
+        onClick={() => setOpen(o => !o)}
+      >
+        <span className="w-12 shrink-0 pt-px"><LevelBadge level={first.level} /></span>
+        <span className="w-4 shrink-0" />
+        <span className="w-24 shrink-0 text-gray-400 tabular-nums pt-px">{first.timestamp ?? ''}</span>
+        <span className="w-36 shrink-0 text-gray-400 truncate pt-px" title={first.source ?? first.raw.stream}>
+          {first.source ? first.source.split('::').pop() : first.raw.stream}
+        </span>
+        <span className="flex-1 flex items-center gap-1.5 min-w-0">
+          {open
+            ? <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
+            : <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
+          }
+          <Braces className="w-3 h-3 text-blue-400 shrink-0" />
+          {group.prefix && (
+            <span className="text-gray-500 truncate mr-1">{group.prefix}</span>
+          )}
+          {!open && (
+            <span className="text-gray-400 italic">
+              {Array.isArray(group.parsed)
+                ? `[${(group.parsed as unknown[]).length} items]`
+                : `{${Object.keys(group.parsed as object).slice(0, 3).join(', ')}${Object.keys(group.parsed as object).length > 3 ? ', …' : ''}}`
+              }
+            </span>
+          )}
+          <span className="ml-auto text-gray-300 text-[10px] tabular-nums shrink-0">
+            {group.lines.length > 1 ? `${group.lines.length} lines` : ''}
+          </span>
+        </span>
+      </div>
+
+      {/* Formatted JSON */}
+      {open && (
+        <div className="mx-4 mb-1.5 mt-0.5 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto">
+          <pre className="px-3 py-2 text-xs leading-relaxed whitespace-pre font-mono">
+            {colorizeJSON(pretty)}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Filter types ─────────────────────────────────────────────────────────────
 
 type LevelFilter = 'ALL' | Level
@@ -202,6 +387,9 @@ export default function LogViewer() {
 
   const errorCount = allLines.filter(l => l.level === 'ERROR').length
 
+  // Group filtered lines into normal lines and coalesced JSON blocks
+  const renderGroups = useMemo(() => buildRenderGroups(filtered), [filtered])
+
   const clearTimeFilter = () => navigate('/logs')
 
   return (
@@ -219,7 +407,7 @@ export default function LogViewer() {
               <button
                 key={l}
                 onClick={() => setLevelFilter(l)}
-                className={`px-2.5 py-1.5 transition-colors ${levelFilter === l ? 'bg-fermyon-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                className={`px-2.5 py-1.5 transition-colors ${levelFilter === l ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
               >{l}</button>
             ))}
           </div>
@@ -276,18 +464,21 @@ export default function LogViewer() {
 
       {/* Log body */}
       <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto font-mono text-xs">
-        {filtered.length === 0 ? (
+        {renderGroups.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-gray-400 gap-2">
             <Search className="w-8 h-8 opacity-25" />
             <p>{allLines.length === 0 ? 'Waiting for log output…' : 'No lines match your filter.'}</p>
           </div>
         ) : (
-          filtered.map(l => {
+          renderGroups.map((group, gi) => {
+            if (group.type === 'json') return <JsonBlock key={group.lines[0].id} group={group} />
+
+            const l = group.line
             const isHttp = l.isHttpIn || l.isHttpOut
             const rowCls = l.level ? LEVEL_ROW[l.level] : ''
             return (
               <div
-                key={l.id}
+                key={gi}
                 className={`flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}
               >
                 <span className="w-12 shrink-0 pt-px">

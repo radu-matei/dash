@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Activity, AlertCircle, ChevronDown, ChevronRight,
@@ -373,11 +373,38 @@ export default function TraceViewer() {
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const navigate = useNavigate()
 
-  const load = async () => {
-    try { setAllSpans((await getTraces()) ?? []); setError(null) }
-    catch (e: unknown) { setError((e as Error).message) }
-  }
-  useEffect(() => { load(); const id = setInterval(load, 3000); return () => clearInterval(id) }, [])
+  // Ref that the refresh button can call to skip the current sleep and fetch immediately.
+  const wakeRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    // Sequential polling: wait for each response to arrive before sleeping for
+    // the next tick.  setInterval would abort the previous in-flight request
+    // every 3 s, causing perpetual cancellations when the payload is large.
+    const ctrl = new AbortController()
+    let active = true
+
+    const run = async () => {
+      while (active) {
+        try {
+          setAllSpans((await getTraces(ctrl.signal)) ?? [])
+          setError(null)
+        } catch (e: unknown) {
+          if ((e as Error).name === 'AbortError') break
+          setError((e as Error).message)
+        }
+        // Sleep 3 s, but allow early wake via wakeRef (refresh button).
+        await new Promise<void>(res => {
+          const t = setTimeout(res, 3000)
+          wakeRef.current = () => { clearTimeout(t); res() }
+          ctrl.signal.addEventListener('abort', () => { clearTimeout(t); res() })
+        })
+        wakeRef.current = null
+      }
+    }
+
+    run()
+    return () => { active = false; ctrl.abort() }
+  }, [])
 
   const colorMap = useMemo(() => buildColorMap(allSpans), [allSpans])
 
@@ -446,7 +473,7 @@ export default function TraceViewer() {
               onChange={e => setFilter(e.target.value)}
             />
           </div>
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={load}>
+          <button className="btn-secondary text-xs h-8 px-2.5" onClick={() => wakeRef.current?.()}>
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -527,7 +554,7 @@ export default function TraceViewer() {
                       <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        className={`px-3 py-1.5 transition-colors ${activeTab === tab ? 'bg-fermyon-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        className={`px-3 py-1.5 transition-colors ${activeTab === tab ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
                       >
                         {label}
                       </button>

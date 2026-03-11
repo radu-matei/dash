@@ -65,6 +65,9 @@ type AppConfig struct {
 	Variables   []VarEntry
 	Components  []ComponentInfo
 	Triggers    []TriggerInfo
+	// ListenAddr is the URL where the Spin app is reachable (derived from --listen).
+	// Empty when no --listen flag was provided.
+	ListenAddr string
 }
 
 // ─── Load ─────────────────────────────────────────────────────────────────────
@@ -100,6 +103,24 @@ func Load(dir string) (*AppConfig, error) {
 			vars = append(vars, entry)
 		}
 	}
+
+	// Synthesize VarEntry items for variable names referenced in component
+	// bindings that are not declared in [variables].  This covers apps where
+	// [variables] is absent or only partially defined, so the Variables page
+	// always surfaces every variable the app actually uses.
+	knownVarKeys := make(map[string]struct{}, len(vars))
+	for _, v := range vars {
+		knownVarKeys[v.Key] = struct{}{}
+	}
+	for _, comp := range components {
+		for k := range comp.Variables {
+			if _, exists := knownVarKeys[k]; !exists {
+				vars = append(vars, VarEntry{Key: k, Source: "spin.toml"})
+				knownVarKeys[k] = struct{}{}
+			}
+		}
+	}
+	sort.Slice(vars, func(i, j int) bool { return vars[i].Key < vars[j].Key })
 
 	sort.Slice(components, func(i, j int) bool { return components[i].ID < components[j].ID })
 

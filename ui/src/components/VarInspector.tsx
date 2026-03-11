@@ -27,9 +27,11 @@ export default function VarInspector() {
       return next
     })
 
-  const spinTomlCount = vars.filter(v => v.source === 'spin.toml').length
-  const envCount      = vars.filter(v => v.source === '.env').length
-  const secretCount   = vars.filter(v => v.secret).length
+  const spinTomlCount  = vars.filter(v => v.source === 'spin.toml').length
+  const envCount       = vars.filter(v => v.source === '.env').length
+  const spinVarCount   = vars.filter(v => v.source === 'SPIN_VARIABLE').length
+  const cliCount       = vars.filter(v => v.source === '--variable').length
+  const secretCount    = vars.filter(v => v.secret).length
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-white">
@@ -40,6 +42,8 @@ export default function VarInspector() {
             <>
               <span className="badge badge-blue">{spinTomlCount} from spin.toml</span>
               {envCount > 0 && <span className="badge badge-yellow">{envCount} from .env</span>}
+              {spinVarCount > 0 && <span className="badge badge-orange">{spinVarCount} from env</span>}
+              {cliCount > 0 && <span className="badge badge-green">{cliCount} from --variable</span>}
               {secretCount > 0 && <span className="badge badge-gray">{secretCount} secret{secretCount !== 1 ? 's' : ''}</span>}
             </>
           )}
@@ -82,8 +86,13 @@ export default function VarInspector() {
                 return (
                   <tr key={i}>
                     <td>
-                      <span className={v.source === '.env' ? 'badge badge-yellow' : 'badge badge-blue'}>
-                        {v.source}
+                      <span className={
+                        v.source === '.env'           ? 'badge badge-yellow' :
+                        v.source === 'SPIN_VARIABLE'  ? 'badge badge-orange' :
+                        v.source === '--variable'     ? 'badge badge-green'  :
+                                                        'badge badge-blue'
+                      }>
+                        {v.source === 'SPIN_VARIABLE' ? 'env' : v.source}
                       </span>
                     </td>
                     <td>
@@ -126,10 +135,12 @@ export default function VarInspector() {
 
         {vars.length > 0 && (
           <div className="mx-4 my-6 p-4 bg-gray-50 rounded-xl border border-gray-200">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Variable resolution order</p>
+            <p className="text-xs font-semibold text-gray-700 mb-2">Variable resolution order (highest wins)</p>
             <ol className="list-decimal list-inside space-y-1 text-xs text-gray-600">
-              <li><span className="badge badge-yellow mr-1">.env</span> values override spin.toml defaults</li>
-              <li><span className="badge badge-blue mr-1">spin.toml</span> defines defaults and secret flags</li>
+              <li><span className="badge badge-green mr-1">--variable</span> CLI flag</li>
+              <li><span className="badge badge-orange mr-1">env</span> <code className="text-xs">SPIN_VARIABLE_*</code> environment variables</li>
+              <li><span className="badge badge-yellow mr-1">.env</span> file</li>
+              <li><span className="badge badge-blue mr-1">spin.toml</span> defaults and secret flags</li>
             </ol>
           </div>
         )}

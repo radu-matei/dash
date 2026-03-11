@@ -8,7 +8,7 @@ export default {
         mono: ['"JetBrains Mono"', 'ui-monospace', 'monospace'],
       },
       colors: {
-        fermyon: {
+        spin: {
           seagreen:      '#34E8BD',
           midgreen:      '#1FBCA0',
           oxfordblue:    '#0D203F',

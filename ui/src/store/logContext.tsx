@@ -20,15 +20,7 @@ export function LogProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let active = true
 
-    // Pre-populate from .spin/logs/
-    fetch('/api/logs/history')
-      .then(r => r.json())
-      .then((hist: LogLine[]) => {
-        if (active) setRawLines(hist.slice(-MAX))
-      })
-      .catch(() => {})
-
-    // Live stream
+    // Live stream only — no historical log loading
     const es = subscribeToLogs(line => {
       if (!active) return
       setRawLines(prev => {

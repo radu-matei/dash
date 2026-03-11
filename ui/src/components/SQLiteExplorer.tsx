@@ -79,7 +79,7 @@ export default function SQLiteExplorer() {
                 key={m}
                 onClick={() => setMode(m)}
                 className={`px-3 py-1.5 transition-colors ${
-                  mode === m ? 'bg-fermyon-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+                  mode === m ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 {m === 'query' ? 'Read (SELECT)' : 'Write (DML)'}

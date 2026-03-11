@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AreaChart, Area, BarChart, Bar, CartesianGrid, Cell,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -35,9 +35,9 @@ function StatCard({
   label, value, sub, Icon, accent = false, warn = false,
 }: { label: string; value: string; sub?: string; Icon: typeof Activity; accent?: boolean; warn?: boolean }) {
   return (
-    <div className={`card p-5 flex items-start gap-4 ${accent ? 'border-fermyon-seagreen/40' : warn ? 'border-amber-300' : ''}`}>
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-fermyon-seagreen/15' : warn ? 'bg-amber-50' : 'bg-gray-100'}`}>
-        <Icon className={`w-5 h-5 ${accent ? 'text-fermyon-midgreen' : warn ? 'text-amber-600' : 'text-gray-500'}`} />
+    <div className={`card p-5 flex items-start gap-4 ${accent ? 'border-spin-seagreen/40' : warn ? 'border-amber-300' : ''}`}>
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : warn ? 'bg-amber-50' : 'bg-gray-100'}`}>
+        <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : warn ? 'text-amber-600' : 'text-gray-500'}`} />
       </div>
       <div>
         <p className="text-2xl font-bold text-gray-900 leading-none">{value}</p>
@@ -53,8 +53,8 @@ function StatCard({
 function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; title: string; sub?: string }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <div className="w-7 h-7 rounded-lg bg-fermyon-oxfordblue/10 flex items-center justify-center shrink-0">
-        <Icon className="w-4 h-4 text-fermyon-oxfordblue" />
+      <div className="w-7 h-7 rounded-lg bg-spin-oxfordblue/10 flex items-center justify-center shrink-0">
+        <Icon className="w-4 h-4 text-spin-oxfordblue" />
       </div>
       <div>
         <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
@@ -277,17 +277,33 @@ export default function MetricsPage() {
   const [otelMetrics, setOtelMetrics] = useState<Record<string, MetricSeries>>({})
   const [loading, setLoading] = useState(true)
 
-  const load = async () => {
-    const [s, o] = await Promise.allSettled([getTraces(), getOtelMetrics()])
-    if (s.status === 'fulfilled') setSpans(s.value ?? [])
-    if (o.status === 'fulfilled') setOtelMetrics(o.value ?? {})
-    setLoading(false)
-  }
+  const wakeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
-    load()
-    const id = setInterval(load, 2000)
-    return () => clearInterval(id)
+    // Sequential polling — same rationale as TraceViewer: avoid canceling
+    // in-flight requests when the payload is large.
+    const ctrl = new AbortController()
+    let active = true
+
+    const run = async () => {
+      while (active) {
+        const sig = ctrl.signal
+        const [s, o] = await Promise.allSettled([getTraces(sig), getOtelMetrics(sig)])
+        if (!active || sig.aborted) break
+        if (s.status === 'fulfilled') setSpans(s.value ?? [])
+        if (o.status === 'fulfilled') setOtelMetrics(o.value ?? {})
+        setLoading(false)
+        await new Promise<void>(res => {
+          const t = setTimeout(res, 3000)
+          wakeRef.current = () => { clearTimeout(t); res() }
+          sig.addEventListener('abort', () => { clearTimeout(t); res() })
+        })
+        wakeRef.current = null
+      }
+    }
+
+    run()
+    return () => { active = false; ctrl.abort() }
   }, [])
 
   if (loading) return (
@@ -302,8 +318,8 @@ export default function MetricsPage() {
       <div className="page-header bg-white sticky top-0 z-10 shrink-0">
         <h1 className="page-title">Metrics</h1>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">auto-refreshes every 2s</span>
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={load}>
+          <span className="text-xs text-gray-400">auto-refreshes every 3s</span>
+          <button className="btn-secondary text-xs h-8 px-2.5" onClick={() => wakeRef.current?.()}>
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
         </div>

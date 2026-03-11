@@ -3,17 +3,18 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"github.com/spinframework/dash/internal/config"
-	"github.com/spinframework/dash/internal/db"
 	"github.com/spinframework/dash/internal/otel"
 	"github.com/spinframework/dash/internal/process"
 	"github.com/spinframework/dash/internal/server"
@@ -66,6 +67,16 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading spin.toml: %w", err)
 	}
 
+	// Apply SPIN_VARIABLE_* environment variable overrides.
+	// Priority: spin.toml < .env < SPIN_VARIABLE_* < --variable (highest)
+	applyVarOverride(cfg, collectSpinVarEnv(), "SPIN_VARIABLE")
+
+	// Apply --variable flag overrides and capture --listen address from the
+	// extra args that will be forwarded to 'spin up'.
+	varOverrides, listenAddr := parseSpinArgs(args)
+	applyVarOverride(cfg, varOverrides, "--variable")
+	cfg.ListenAddr = listenAddr
+
 	fmt.Printf("▶  Spin Dashboard — app: %s\n", cfg.Name)
 
 	// SSE hub for log streaming.
@@ -74,31 +85,6 @@ func run(cmd *cobra.Command, args []string) error {
 	// OTel receivers.
 	otelReceiver := otel.NewReceiver()
 	metricsReceiver := otel.NewMetricsReceiver(500)
-
-	// Open .spin/ databases (best-effort; the .spin dir may not exist yet).
-	spinDir := filepath.Join(cwd, ".spin")
-	var sqliteDB *db.SQLiteDB
-	var kvDB *db.KVDB
-
-	sqlitePath := filepath.Join(spinDir, "sqlite_db.db")
-	if _, err := os.Stat(sqlitePath); err == nil {
-		if sdb, err := db.OpenSQLite(sqlitePath); err == nil {
-			sqliteDB = sdb
-			defer sdb.Close()
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: could not open sqlite_db.db: %v\n", err)
-		}
-	}
-
-	kvPath := filepath.Join(spinDir, "sqlite_key_value.db")
-	if _, err := os.Stat(kvPath); err == nil {
-		if kdb, err := db.OpenKV(kvPath); err == nil {
-			kvDB = kdb
-			defer kdb.Close()
-		} else {
-			fmt.Fprintf(os.Stderr, "warning: could not open sqlite_key_value.db: %v\n", err)
-		}
-	}
 
 	// Locate the spin binary.
 	spinBin := os.Getenv("SPIN_BIN_PATH")
@@ -120,17 +106,28 @@ func run(cmd *cobra.Command, args []string) error {
 	// Set up the HTTP mux.
 	mux, err := server.New(server.Options{
 		Port:        port,
-		AppDir:      cwd,
 		Hub:         hub,
 		Runner:      runner,
 		OTel:        otelReceiver,
 		OTelMetrics: metricsReceiver,
 		Cfg:         cfg,
-		SQLite:      sqliteDB,
-		KV:          kvDB,
 	})
 	if err != nil {
 		return fmt.Errorf("setting up server: %w", err)
+	}
+
+	// Pre-bind both listeners before starting spin so that the OTel SDK inside
+	// spin never gets "connection refused" due to a startup race.  Using
+	// net.Listen + srv.Serve guarantees the ports are accepting connections
+	// before runner.Start() is called.
+	otelLn, err := net.Listen("tcp", fmt.Sprintf(":%d", otelPort))
+	if err != nil {
+		return fmt.Errorf("cannot bind OTLP port %d (is another dashboard instance running?): %w", otelPort, err)
+	}
+	dashLn, err := net.Listen("tcp", server.Addr(port))
+	if err != nil {
+		_ = otelLn.Close()
+		return fmt.Errorf("cannot bind dashboard port %d: %w", port, err)
 	}
 
 	// Start OTLP HTTP receiver on its own mux.
@@ -141,23 +138,17 @@ func run(cmd *cobra.Command, args []string) error {
 	otelMux.HandleFunc("/v1/metrics", metricsReceiver.HandleOTLP)
 	otelMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
-	otelSrv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", otelPort),
-		Handler: otelMux,
-	}
+	otelSrv := &http.Server{Handler: otelMux}
 	go func() {
-		if err := otelSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := otelSrv.Serve(otelLn); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "otel receiver error: %v\n", err)
 		}
 	}()
 
 	// Start main dashboard HTTP server.
-	dashSrv := &http.Server{
-		Addr:    server.Addr(port),
-		Handler: mux,
-	}
+	dashSrv := &http.Server{Handler: mux}
 	go func() {
-		if err := dashSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := dashSrv.Serve(dashLn); err != nil && err != http.ErrServerClosed {
 			fmt.Fprintf(os.Stderr, "dashboard server error: %v\n", err)
 		}
 	}()
@@ -195,4 +186,93 @@ func run(cmd *cobra.Command, args []string) error {
 	_ = otelSrv.Shutdown(ctx)
 
 	return nil
+}
+
+// collectSpinVarEnv reads all SPIN_VARIABLE_<NAME>=value environment variables
+// and returns them as a lowercase-keyed map.
+func collectSpinVarEnv() map[string]string {
+	out := make(map[string]string)
+	for _, env := range os.Environ() {
+		const prefix = "SPIN_VARIABLE_"
+		if !strings.HasPrefix(env, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(env, prefix)
+		idx := strings.IndexByte(rest, '=')
+		if idx < 0 {
+			continue
+		}
+		// SPIN_VARIABLE_VERTEX_AI_PROJECT → vertex_ai_project
+		key := strings.ToLower(rest[:idx])
+		out[key] = rest[idx+1:]
+	}
+	return out
+}
+
+// applyVarOverride applies a map of key→value overrides to cfg.Variables,
+// tagging each changed (or newly added) entry with the given source label.
+func applyVarOverride(cfg *config.AppConfig, overrides map[string]string, source string) {
+	for k, v := range overrides {
+		applied := false
+		for i := range cfg.Variables {
+			if cfg.Variables[i].Key == k {
+				cfg.Variables[i].Value = v
+				cfg.Variables[i].Source = source
+				applied = true
+				break
+			}
+		}
+		if !applied {
+			cfg.Variables = append(cfg.Variables, config.VarEntry{
+				Key:    k,
+				Value:  v,
+				Source: source,
+			})
+		}
+	}
+}
+
+// parseSpinArgs scans the extra args forwarded to 'spin up' and extracts:
+//   - --variable key=value  (also -v key=value)
+//   - --listen address
+func parseSpinArgs(args []string) (varOverrides map[string]string, listenAddr string) {
+	varOverrides = make(map[string]string)
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "--variable" || arg == "-v":
+			if i+1 < len(args) {
+				i++
+				if k, v, ok := strings.Cut(args[i], "="); ok {
+					varOverrides[k] = v
+				}
+			}
+		case strings.HasPrefix(arg, "--variable="):
+			rest := strings.TrimPrefix(arg, "--variable=")
+			if k, v, ok := strings.Cut(rest, "="); ok {
+				varOverrides[k] = v
+			}
+		case arg == "--listen":
+			if i+1 < len(args) {
+				i++
+				listenAddr = normalizeListenAddr(args[i])
+			}
+		case strings.HasPrefix(arg, "--listen="):
+			listenAddr = normalizeListenAddr(strings.TrimPrefix(arg, "--listen="))
+		}
+	}
+	return
+}
+
+// normalizeListenAddr converts a spin --listen value like "0.0.0.0:3002" or
+// ":3002" into a browser-navigable URL like "http://localhost:3002".
+func normalizeListenAddr(addr string) string {
+	addr = strings.ReplaceAll(addr, "0.0.0.0", "localhost")
+	if strings.HasPrefix(addr, ":") {
+		addr = "localhost" + addr
+	}
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		addr = "http://" + addr
+	}
+	return addr
 }

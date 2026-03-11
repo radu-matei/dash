@@ -46,11 +46,12 @@ type Runner struct {
 	extraEnv []string
 	logFn    LogFunc
 
-	cmd    *exec.Cmd
-	pgid   int
-	mu     sync.Mutex
-	status atomic.Int32
-	err    atomic.Value // stores the last error string
+	cmd        *exec.Cmd
+	pgid       int
+	mu         sync.Mutex
+	status     atomic.Int32
+	err        atomic.Value // stores the last error string
+	listenAddr atomic.Value // stores the detected "Serving http://..." URL
 }
 
 // New creates a Runner that will execute spinBin with the given args,
@@ -125,16 +126,52 @@ func (r *Runner) LastError() string {
 	return ""
 }
 
+// ListenAddr returns the URL where spin announced it is serving, if detected.
+// Returns empty string until spin prints its "Serving http://..." line.
+func (r *Runner) ListenAddr() string {
+	if v := r.listenAddr.Load(); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
 // pipe reads lines from reader, sends each to the SSE hub via logFn, and
 // simultaneously writes to terminal so output is visible even before any
 // browser client connects.
+// It also watches for spin's "Serving http://..." announcement to capture the
+// listen address even when no --listen flag was passed.
 func (r *Runner) pipe(reader io.ReadCloser, stream string, terminal io.Writer) {
 	scanner := bufio.NewScanner(reader)
 	for scanner.Scan() {
 		line := scanner.Text()
 		r.logFn(stream, line)
 		fmt.Fprintln(terminal, line)
+
+		// Detect spin's listen address announcement, e.g.:
+		//   Serving http://127.0.0.1:3000
+		if r.listenAddr.Load() == nil {
+			if addr := extractServingAddr(line); addr != "" {
+				r.listenAddr.Store(addr)
+			}
+		}
 	}
+}
+
+// extractServingAddr parses a line like "Serving http://127.0.0.1:3000" and
+// returns a browser-navigable URL (replacing 127.0.0.1 with localhost).
+func extractServingAddr(line string) string {
+	line = strings.TrimSpace(line)
+	const prefix = "Serving "
+	if !strings.HasPrefix(line, prefix) {
+		return ""
+	}
+	addr := strings.TrimSpace(line[len(prefix):])
+	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+		return ""
+	}
+	// Prefer localhost over 127.0.0.1 for browser navigation.
+	addr = strings.ReplaceAll(addr, "://127.0.0.1:", "://localhost:")
+	return addr
 }
 
 func (r *Runner) wait() {

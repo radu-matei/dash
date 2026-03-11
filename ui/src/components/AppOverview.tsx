@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -20,7 +20,8 @@ import {
   Zap,
 } from 'lucide-react'
 import { Icon } from '@iconify/react'
-import { getApp, type AppInfo, type ComponentInfo, type TriggerInfo } from '../api/client'
+import { type ComponentInfo, type TriggerInfo } from '../api/client'
+import { useAppStore } from '../store/appContext'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -115,9 +116,9 @@ function StatCard({ label, value, Icon, accent }: {
   label: string; value: string | number; Icon: typeof Layers; accent?: boolean
 }) {
   return (
-    <div className={`card p-4 flex items-center gap-4 ${accent ? 'border-fermyon-seagreen/40' : ''}`}>
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-fermyon-seagreen/15' : 'bg-gray-100'}`}>
-        <Icon className={`w-5 h-5 ${accent ? 'text-fermyon-midgreen' : 'text-gray-500'}`} />
+    <div className={`card p-4 flex items-center gap-4 ${accent ? 'border-spin-seagreen/40' : ''}`}>
+      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : 'bg-gray-100'}`}>
+        <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : 'text-gray-500'}`} />
       </div>
       <div>
         <p className="text-2xl font-bold text-gray-900">{value}</p>
@@ -313,19 +314,45 @@ function DetailPane({ component: c, onClose }: { component: ComponentInfo; onClo
 }
 
 // ─── Topology graph ───────────────────────────────────────────────────────────
+// Column layout: Triggers → Components → Resources → Variables
+// Service bindings will slot in as a new column between Resources and Variables.
 
-const NODE_H   = 56
-const NODE_W   = 210
-const GAP      = 14
-const COL_GAP  = 110
-const COMP_X   = NODE_W + COL_GAP
-const RES_X    = NODE_W + COL_GAP + NODE_W + COL_GAP
-const PADDING  = 24
+// Standard node dimensions (triggers, components, resources)
+const NODE_H  = 56
+const NODE_W  = 210
+const GAP     = 14
+const COL_GAP = 100
+const COMP_X  = NODE_W + COL_GAP
+const RES_X   = COMP_X + NODE_W + COL_GAP
+const PADDING = 24
 
-function colH(n: number)  { return n * NODE_H + Math.max(0, n - 1) * GAP }
+// Variable nodes are more compact so a long list doesn't tower over the rest.
+// The column sits further right to give the sweeping variable-binding arcs
+// enough room — variable edges always originate from the *component* right
+// edge and sweep past the resource column, so the curves need visual space.
+const VAR_NODE_H  = 40
+const VAR_NODE_W  = 190
+const VAR_GAP     = 6
+const VAR_COL_GAP = 120
+const VAR_X       = RES_X + NODE_W + VAR_COL_GAP
+
+// Compound bezier with adjustable control-point bias.
+// bias=0.5 gives a symmetric S-curve; bias<0.5 pushes the bend towards x1.
+function bezBiased(x1: number, y1: number, x2: number, y2: number, bias = 0.5) {
+  const cx1 = x1 + (x2 - x1) * bias
+  const cx2 = x1 + (x2 - x1) * (1 - bias)
+  return `M ${x1} ${y1} C ${cx1} ${y1} ${cx2} ${y2} ${x2} ${y2}`
+}
+
+function colH(n: number) { return n * NODE_H + Math.max(0, n - 1) * GAP }
 function nodeY(off: number, i: number) { return off + i * (NODE_H + GAP) }
 function colOff(n: number, total: number) {
   return PADDING + Math.max(0, (total - PADDING * 2 - colH(n)) / 2)
+}
+function varColH(n: number) { return n * VAR_NODE_H + Math.max(0, n - 1) * VAR_GAP }
+function varNodeY(off: number, i: number) { return off + i * (VAR_NODE_H + VAR_GAP) }
+function varColOff(n: number, total: number) {
+  return PADDING + Math.max(0, (total - PADDING * 2 - varColH(n)) / 2)
 }
 function bez(x1: number, y1: number, x2: number, y2: number) {
   const cx = (x1 + x2) / 2
@@ -351,7 +378,7 @@ function TopologyGraph({
   const knownComponentIds = new Set(components.map(c => c.id))
   sortedTriggers.push(...triggers.filter(t => !knownComponentIds.has(t.component)))
 
-  // Resources
+  // Resources (KV + SQLite)
   const kvStores  = [...new Set(components.flatMap(c => c.keyValueStores  ?? []))]
   const sqliteDbs = [...new Set(components.flatMap(c => c.sqliteDatabases ?? []))]
   const resources = [
@@ -360,13 +387,27 @@ function TopologyGraph({
   ]
   const hasResources = resources.length > 0
 
-  const svgW   = hasResources ? RES_X + NODE_W + PADDING : COMP_X + NODE_W + PADDING
-  const innerH = Math.max(colH(sortedTriggers.length), colH(components.length), colH(resources.length))
+  // Variables — unique names referenced by any component (keys of component.variables)
+  // Service bindings will slot in here as another resource-like column in the future.
+  const varNames = [...new Set(components.flatMap(c => Object.keys(c.variables ?? {})))]
+  const hasVars  = varNames.length > 0
+
+  // Canvas dimensions
+  const rightmostX  = hasVars ? VAR_X : hasResources ? RES_X : COMP_X
+  const rightmostW  = hasVars ? VAR_NODE_W : NODE_W
+  const svgW   = rightmostX + rightmostW + PADDING
+  const innerH = Math.max(
+    colH(sortedTriggers.length),
+    colH(components.length),
+    colH(resources.length),
+    varColH(varNames.length),
+  )
   const totalH = innerH + PADDING * 2
 
   const tOff = colOff(sortedTriggers.length, totalH)
   const cOff = colOff(components.length, totalH)
   const rOff = colOff(resources.length, totalH)
+  const vOff = varColOff(varNames.length, totalH)
 
   // Shared resource detection
   const sharedCount = (kind: string, name: string) =>
@@ -421,6 +462,27 @@ function TopologyGraph({
     })
   })
 
+  // Component → variable edges
+  // Edges always originate from the component's right edge, sweeping past the
+  // resource column.  This makes the visual intent clear (variables are a
+  // component concern, not a resource concern) and gives the arcs room to breathe.
+  const varEdges: {
+    x1: number; y1: number; x2: number; y2: number; selectedComp: boolean
+  }[] = []
+  const VAR_EDGE_X1 = COMP_X + PADDING + NODE_W
+  components.forEach((c, ci) => {
+    const compSelected = selected?.componentId === c.id
+    Object.keys(c.variables ?? {}).forEach(varName => {
+      const vi = varNames.indexOf(varName)
+      if (vi < 0) return
+      varEdges.push({
+        x1: VAR_EDGE_X1,       y1: nodeY(cOff, ci)    + NODE_H     / 2,
+        x2: VAR_X + PADDING,   y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
+        selectedComp: compSelected,
+      })
+    })
+  })
+
   const isTriggerHighlighted = (ti: number, compId: string) => {
     if (!selected) return false
     if (selected.kind === 'trigger') return selected.componentId === compId && selected.triggerIdx === ti
@@ -435,8 +497,9 @@ function TopologyGraph({
       {/* Column headers */}
       <div className="flex text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3" style={{ paddingLeft: PADDING }}>
         <div style={{ width: NODE_W + COL_GAP }}>Triggers</div>
-        <div style={{ width: NODE_W + (hasResources ? COL_GAP : 0) }}>Components</div>
-        {hasResources && <div style={{ width: NODE_W }}>Resources</div>}
+        <div style={{ width: NODE_W + (hasResources || hasVars ? COL_GAP : 0) }}>Components</div>
+        {hasResources && <div style={{ width: NODE_W + (hasVars ? VAR_COL_GAP : 0) }}>Resources</div>}
+        {hasVars && <div style={{ width: VAR_NODE_W }}>Variables</div>}
       </div>
 
       <div className="relative" style={{ width: svgW, height: totalH }}>
@@ -465,6 +528,16 @@ function TopologyGraph({
               strokeWidth={e.selectedComp ? 1.5 : 1}
               strokeDasharray={e.shared ? '5 3' : undefined}
               strokeOpacity={e.selectedComp ? 0.8 : 0.6}
+            />
+          ))}
+          {hasVars && varEdges.map((e, i) => (
+            <path key={`ve-${i}`}
+              d={bezBiased(e.x1, e.y1, e.x2, e.y2, 0.35)}
+              fill="none"
+              stroke={e.selectedComp ? '#d97706' : '#fed7aa'}
+              strokeWidth={e.selectedComp ? 1.5 : 1}
+              strokeDasharray="5 3"
+              strokeOpacity={e.selectedComp ? 0.9 : 0.7}
             />
           ))}
         </svg>
@@ -501,11 +574,12 @@ function TopologyGraph({
         {components.map((c, ci) => {
           const highlighted = isCompHighlighted(c.id)
           const src = c.source?.split('/').pop() ?? c.source ?? ''
+          const lang = detectLang(c)
           return (
             <div key={`c-${ci}`}
               className={`absolute flex items-center rounded-xl overflow-hidden cursor-pointer transition-all ${
                 highlighted
-                  ? 'border-2 border-fermyon-seagreen shadow-lg shadow-blue-200 scale-[1.02]'
+                  ? 'border-2 border-spin-seagreen shadow-lg shadow-blue-200 scale-[1.02]'
                   : 'shadow-md hover:shadow-lg hover:scale-[1.01]'
               }`}
               style={{
@@ -517,16 +591,17 @@ function TopologyGraph({
               )}
             >
               <div className="w-10 h-full bg-black/25 flex items-center justify-center shrink-0">
-                <span className="text-white text-sm font-bold uppercase">{c.id.charAt(0)}</span>
+                <Icon
+                  icon={lang ? lang.iconName : 'simple-icons:webassembly'}
+                  width={18} height={18}
+                  className="text-white/80"
+                />
               </div>
               <div className="px-3 min-w-0 flex-1">
                 <div className="text-xs font-bold text-white truncate">{c.id}</div>
                 <div className="text-xs text-blue-200/60 font-mono truncate" title={c.source ?? ''}>
                   {src.length > 26 ? src.slice(0, 26) + '…' : src}
                 </div>
-              </div>
-              <div className="pr-3 shrink-0">
-                <LangIcon comp={c} size={16} />
               </div>
             </div>
           )
@@ -553,6 +628,29 @@ function TopologyGraph({
             </div>
           )
         })}
+
+        {/* Variable nodes — compact height to keep the canvas proportional */}
+        {hasVars && varNames.map((varName, vi) => {
+          const usedBy = components.filter(c => Object.keys(c.variables ?? {}).includes(varName))
+          const shared = usedBy.length > 1
+          const compSelected = usedBy.some(c => selected?.componentId === c.id)
+          return (
+            <div key={`v-${vi}`}
+              className={`absolute flex items-center bg-white rounded-lg shadow-sm overflow-hidden border transition-all ${
+                compSelected ? 'border-amber-400 shadow-amber-100' : 'border-amber-200'
+              }`}
+              style={{ left: VAR_X + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H }}
+            >
+              <div className={`w-8 h-full flex items-center justify-center shrink-0 border-r ${compSelected ? 'bg-amber-100 border-amber-200' : 'bg-amber-50 border-amber-100'}`}>
+                <Layers className="w-3.5 h-3.5 text-amber-500" />
+              </div>
+              <div className="px-2.5 min-w-0 flex-1">
+                <div className="text-xs font-semibold text-gray-800 font-mono truncate">{varName}</div>
+                {shared && <div className="text-[10px] text-amber-400 leading-tight">shared</div>}
+              </div>
+            </div>
+          )
+        })}
       </div>
 
       {/* Legend */}
@@ -569,6 +667,12 @@ function TopologyGraph({
           <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
           Shared resource
         </div>
+        {hasVars && (
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#d97706" strokeWidth="1.5" /></svg>
+            Variable binding
+          </div>
+        )}
         <div className="flex items-center gap-1.5 text-gray-300">
           · Click any node to inspect
         </div>
@@ -581,14 +685,18 @@ function TopologyGraph({
 
 function ComponentRow({ comp }: { comp: ComponentInfo }) {
   const [expanded, setExpanded] = useState(false)
+  const lang = detectLang(comp)
   return (
     <>
       <tr className="cursor-pointer hover:bg-gray-50 transition-colors" onClick={() => setExpanded(e => !e)}>
         <td className="px-4 py-3 border-b border-gray-100">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-fermyon-oxfordblue flex items-center justify-center shrink-0">
-              <span className="text-white text-xs font-bold uppercase">{comp.id.charAt(0)}</span>
-            </div>
+            <div className="w-7 h-7 rounded-lg bg-spin-oxfordblue flex items-center justify-center shrink-0">
+              <Icon
+                icon={lang ? lang.iconName : 'simple-icons:webassembly'}
+                width={14} height={14}
+                className="text-white/80"
+              /></div>
             <span className="font-semibold text-gray-900 text-sm">{comp.id}</span>
           </div>
         </td>
@@ -661,29 +769,11 @@ function ComponentRow({ comp }: { comp: ComponentInfo }) {
 type ViewMode = 'graph' | 'list'
 
 export default function AppOverview() {
-  const [app, setApp]       = useState<AppInfo | null>(null)
-  const [error, setError]   = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { app }             = useAppStore()
+  const [error]             = useState<string | null>(null)
+  const loading             = app === null
   const [view, setView]     = useState<ViewMode>('graph')
   const [selected, setSelected] = useState<Selection | null>(null)
-
-  const load = async () => {
-    try {
-      const data = await getApp()
-      setApp(data)
-      setError(null)
-    } catch (e: unknown) {
-      setError((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    load()
-    const id = setInterval(load, 3000)
-    return () => clearInterval(id)
-  }, [])
 
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
@@ -709,7 +799,7 @@ export default function AppOverview() {
       {/* Page header */}
       <div className="page-header shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-fermyon-oxfordblue flex items-center justify-center">
+          <div className="w-9 h-9 rounded-xl bg-spin-oxfordblue flex items-center justify-center">
             <span className="text-white text-sm font-bold uppercase">{app?.name?.charAt(0) ?? 'S'}</span>
           </div>
           <div>
@@ -733,9 +823,6 @@ export default function AppOverview() {
               <LayoutList className="w-3.5 h-3.5" /> List
             </button>
           </div>
-          <button onClick={load} className="btn-secondary text-xs">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
         </div>
       </div>
 
@@ -779,7 +866,7 @@ export default function AppOverview() {
                   <div className="card overflow-hidden">
                     <div className="px-5 py-4 border-b border-gray-100">
                       <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                        <Layers className="w-4 h-4 text-fermyon-midgreen" />
+                        <Layers className="w-4 h-4 text-spin-midgreen" />
                         Components
                         <span className="badge badge-gray ml-1">{components.length}</span>
                       </h2>
@@ -802,7 +889,7 @@ export default function AppOverview() {
                   <div className="card overflow-hidden">
                     <div className="px-5 py-4 border-b border-gray-100">
                       <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                        <Zap className="w-4 h-4 text-fermyon-midgreen" /> Triggers
+                        <Zap className="w-4 h-4 text-spin-midgreen" /> Triggers
                       </h2>
                     </div>
                     <table className="data-table">
