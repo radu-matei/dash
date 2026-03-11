@@ -75,7 +75,7 @@ jobs:
 
       - name: Install spin-pluginify
         run: |
-          curl -fsSL https://github.com/fermyon/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
+          curl -fsSL https://github.com/itowlson/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
           chmod +x spin-pluginify
 
       - name: Package plugin
@@ -115,7 +115,7 @@ jobs:
 
       - name: Install spin-pluginify
         run: |
-          curl -fsSL https://github.com/fermyon/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
+          curl -fsSL https://github.com/itowlson/spin-pluginify/releases/latest/download/spin-pluginify-linux-amd64.tar.gz | tar -xz
           chmod +x spin-pluginify
 
       - name: Determine release tag

@@ -9,28 +9,6 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return res.json()
 }
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    const b = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(b.error ?? res.statusText)
-  }
-  if (res.status === 204) return undefined as T
-  return res.json()
-}
-
-async function del(path: string): Promise<void> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' })
-  if (!res.ok) {
-    const b = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(b.error ?? res.statusText)
-  }
-}
-
 // ── Status ────────────────────────────────────────────────────────────────────
 
 export type SpinStatus = 'starting' | 'running' | 'stopped' | 'error'
@@ -143,21 +121,6 @@ export interface VarEntry {
 
 export const getVars = () => get<VarEntry[]>('/api/vars')
 
-// ── SQLite ────────────────────────────────────────────────────────────────────
-
-export const getSQLiteTables = () => get<string[]>('/api/sqlite/tables')
-
-export interface QueryResult {
-  columns: string[]
-  rows: (string | number | null)[][]
-}
-
-export const querySQLite = (sql: string) =>
-  post<QueryResult>('/api/sqlite/query', { sql })
-
-export const execSQLite = (sql: string) =>
-  post<QueryResult>('/api/sqlite/exec', { sql })
-
 // ── OTel metrics ──────────────────────────────────────────────────────────────
 
 export interface SpanEvent {
@@ -176,18 +139,3 @@ export interface MetricSeries {
 
 export const getOtelMetrics = (signal?: AbortSignal) => get<Record<string, MetricSeries>>('/api/otel-metrics', signal)
 
-// ── KV Store ──────────────────────────────────────────────────────────────────
-
-export interface KVEntry {
-  store: string
-  key: string
-  value: string
-}
-
-export const getKVEntries = (store?: string) =>
-  get<KVEntry[]>(`/api/kv${store ? `?store=${encodeURIComponent(store)}` : ''}`)
-
-export const upsertKV = (entry: KVEntry) => post<void>('/api/kv', entry)
-
-export const deleteKV = (store: string, key: string) =>
-  del(`/api/kv/${encodeURIComponent(store)}/${encodeURIComponent(key)}`)

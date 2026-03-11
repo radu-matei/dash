@@ -1,16 +1,19 @@
 # Spin Dashboard Plugin
 
-A zero-config local developer dashboard for the [Fermyon Spin](https://github.com/fermyon/spin) framework.
+> Note: this is an experimental and unstable project. It was developed using assistive AI coding tools (Opus 4.6), and is subject to changes.
 
-`spin dashboard` wraps `spin up` and opens a web UI that lets you inspect, manipulate, and observe your local Spin application without dropping into the CLI.
+A zero-config local developer dashboard for the [Spin](https://github.com/spinframework/spin) framework.
+
+`spin dashboard` wraps `spin up` and opens a web UI that lets you inspect your local Spin application without dropping into the CLI.
 
 ## Features
 
-- **Live Log Streaming** — stdout/stderr from your Spin app streamed in real time with colorized output
-- **SQLite Explorer** — browse tables, run queries, and inject test data into `.spin/sqlite_db.db`
-- **KV Store Explorer** — CRUD operations on `.spin/sqlite_key_value.db`
+- **Application Structure Overview** — inspect the structure of your application in the web UI
+- **Live Log Streaming** — stdout/stderr from your Spin app streamed in real time
 - **OpenTelemetry Traces** — built-in OTLP receiver visualizing request waterfalls and latency charts
-- **Variable Inspector** — merged view of `spin.toml` variables and `.env` values
+- **Variable Inspector** — merged view of `spin.toml` variables
+
+> Note: this project is not intending to replace [the `spin otel` plugin](https://github.com/spinframework/otel-plugin). Rather, this project provides a unified, no-dependency dashboard that is opinionated about the information it displays, as opposed to `spin otel`, whose goal is to use existing tools that fit into existing workflows.
 
 ## Installation
 
@@ -42,9 +45,9 @@ The dashboard opens automatically at [http://localhost:3001](http://localhost:30
 
 ### Flags
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--port` | `3001` | Port for the dashboard HTTP server |
+| Flag        | Default | Description                           |
+| ----------- | ------- | ------------------------------------- |
+| `--port`    | `3001`  | Port for the dashboard HTTP server    |
 | `--no-open` | `false` | Do not open the browser automatically |
 
 ## Building from Source
@@ -68,13 +71,6 @@ spin dashboard
     │       ├── GET  /api/logs          SSE log stream
     │       ├── GET  /api/traces        OTel trace summaries
     │       ├── GET  /api/vars          merged variable map
-    │       ├── GET  /api/sqlite/tables list tables
-    │       ├── POST /api/sqlite/query  read SQL
-    │       ├── POST /api/sqlite/exec   write SQL
-    │       ├── GET  /api/kv            list KV entries
-    │       ├── POST /api/kv            upsert KV entry
-    │       └── DELETE /api/kv/:s/:k   delete KV entry
-    │
     ├── OTLP receiver :4318  (accepts traces from spin up)
     │
     └── spin up (child process)
