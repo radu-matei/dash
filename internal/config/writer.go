@@ -132,6 +132,18 @@ func PatchAddSQLiteBinding(dir, componentID, dbName string) (bool, error) {
 	return patchStoreBinding(dir, componentID, "sqlite_databases", dbName)
 }
 
+// PatchAddAIBinding adds modelName to the ai_models array for the given
+// component in spin.toml.
+func PatchAddAIBinding(dir, componentID, modelName string) (bool, error) {
+	return patchStoreBinding(dir, componentID, "ai_models", modelName)
+}
+
+// PatchAddOutboundHostBinding adds hostPattern to the allowed_outbound_hosts
+// array for the given component in spin.toml.
+func PatchAddOutboundHostBinding(dir, componentID, hostPattern string) (bool, error) {
+	return patchStoreBinding(dir, componentID, "allowed_outbound_hosts", hostPattern)
+}
+
 // PatchRemoveKVBinding removes storeName from the key_value_stores array for
 // the given component. Returns (true, nil) when removed, (false, nil) when
 // the name was not present.
@@ -336,11 +348,65 @@ func patchComponentListField(content, header, field, name string) (string, bool,
 	}
 
 	if fieldIdx >= 0 {
-		patched, changed := appendToTOMLArray(lines[fieldIdx], name)
-		if !changed {
-			return content, false, nil // already present — no-op
+		fieldLine := lines[fieldIdx]
+		openIdx  := strings.Index(fieldLine, "[")
+		closeIdx := strings.LastIndex(fieldLine, "]")
+
+		if openIdx >= 0 && closeIdx > openIdx {
+			// ── Inline single-line array ─────────────────────────────────────────
+			patched, changed := appendToTOMLArray(fieldLine, name)
+			if !changed {
+				return content, false, nil // already present — no-op
+			}
+			lines[fieldIdx] = patched
+		} else if openIdx >= 0 {
+			// ── Multi-line array ─────────────────────────────────────────────────
+			// The opening [ is on fieldIdx but the closing ] is on a later line.
+			// Scan forward: detect duplicates, then insert the new value before ].
+			quoted := `"` + name + `"`
+			closeLineIdx := -1
+			for i := fieldIdx + 1; i < sectionEnd; i++ {
+				t := strings.TrimSpace(lines[i])
+				if strings.Contains(t, quoted) {
+					return content, false, nil // already present — no-op
+				}
+				if strings.HasPrefix(t, "]") {
+					closeLineIdx = i
+					break
+				}
+			}
+			if closeLineIdx < 0 {
+				return "", false, fmt.Errorf("unclosed array for field %q in section %q", field, header)
+			}
+			// Detect indentation from existing array items (fall back to 4 spaces).
+			indent := "    "
+			if closeLineIdx > fieldIdx+1 {
+				leading := ""
+				for _, ch := range lines[closeLineIdx-1] {
+					if ch == ' ' || ch == '\t' {
+						leading += string(ch)
+					} else {
+						break
+					}
+				}
+				if leading != "" {
+					indent = leading
+				}
+				// Ensure the previous item ends with a comma.
+				prev := strings.TrimRight(lines[closeLineIdx-1], " \t")
+				if !strings.HasSuffix(prev, ",") {
+					lines[closeLineIdx-1] = prev + ","
+				}
+			}
+			newLine := indent + fmt.Sprintf("%q,", name)
+			result := make([]string, 0, len(lines)+1)
+			result = append(result, lines[:closeLineIdx]...)
+			result = append(result, newLine)
+			result = append(result, lines[closeLineIdx:]...)
+			lines = result
+		} else {
+			return "", false, fmt.Errorf("field %q in section %q has no opening bracket", field, header)
 		}
-		lines[fieldIdx] = patched
 	} else {
 		// Insert a brand-new field line right after the section header.
 		newLine := fmt.Sprintf("%s = [%q]", field, name)

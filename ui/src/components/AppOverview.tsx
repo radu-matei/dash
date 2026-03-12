@@ -34,7 +34,7 @@ import { Icon } from '@iconify/react'
 import { type ComponentInfo, type TriggerInfo, type VarEntry, buildAndRestart, getVars, removeBinding, restartSpin } from '../api/client'
 import { useAppStore } from '../store/appContext'
 import AddComponentDialog from './AddComponentDialog'
-import AddBindingDialog from './AddBindingDialog'
+import AddServiceBindingDialog from './AddServiceBindingDialog'
 import AddVariableDialog from './AddVariableDialog'
 import EditSpinTomlModal from './EditSpinTomlModal'
 
@@ -2258,7 +2258,7 @@ export default function AppOverview() {
               className="btn-secondary text-xs"
               disabled={!canMutate}
               onClick={() => setAddMenuOpen(o => !o)}
-              title={canMutate ? 'Add a component, variable, or binding' : 'Requires --allow-edits'}
+              title={canMutate ? 'Add a component, variable, or service binding' : 'Requires --allow-edits'}
               aria-haspopup="true"
               aria-expanded={addMenuOpen}
             >
@@ -2289,7 +2289,7 @@ export default function AppOverview() {
                   onClick={() => { setAddMenuOpen(false); setShowAddBinding(true) }}
                 >
                   <Plus className="w-3.5 h-3.5 shrink-0 text-gray-500" />
-                  Binding
+                  Service Binding
                 </button>
               </div>
             )}
@@ -2455,7 +2455,7 @@ export default function AppOverview() {
         />
       )}
       {showAddBinding && (
-        <AddBindingDialog
+        <AddServiceBindingDialog
           components={components}
           onClose={() => setShowAddBinding(false)}
           onSuccess={() => { refresh(); setShowAddBinding(false) }}
