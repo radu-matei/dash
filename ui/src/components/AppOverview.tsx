@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -24,6 +24,7 @@ import {
   RefreshCw,
   RotateCcw,
   Settings,
+  Sparkles,
   Terminal,
   Trash2,
   X,
@@ -275,6 +276,65 @@ function hostDescription(h: string): string {
   if (h.includes('127.0.0.1') || h.includes('localhost')) return 'Local / loopback access'
   if (h.includes('*')) return 'Wildcard pattern'
   return 'Specific host'
+}
+
+/**
+ * If the host string refers to an in-app component call (spin.internal /
+ * spin.alt, with or without a component-id subdomain), returns the target
+ * component ID or '*' for a wildcard. Returns null for external hosts.
+ *
+ * Examples:
+ *   spin.internal              → '*'
+ *   spin.alt                   → '*'
+ *   controlplane.spin.internal → 'controlplane' (if found in componentIds)
+ *   controlplane.spin.internal → '*' (fallback when id not in the app)
+ */
+function internalCallTarget(host: string, componentIds: ReadonlySet<string>): string | null {
+  const bare = host.replace(/^https?:\/\//, '').split('/')[0].split(':')[0].toLowerCase()
+  if (bare === 'spin.internal' || bare === 'spin.alt') return '*'
+  const m = bare.match(/^(.+)\.spin\.(internal|alt)$/)
+  if (m) return componentIds.has(m[1]) ? m[1] : '*'
+  return null
+}
+
+/** True when the host string contains a Mustache-style variable template. */
+function isVariableTemplate(host: string): boolean {
+  return /\{\{[^}]+\}\}/.test(host)
+}
+
+/** Short label for an outbound host node in the graph. */
+function hostNodeLabel(host: string): string {
+  if (host === '*' || host === 'https://*') return 'Any host'
+  if (isVariableTemplate(host)) return host   // show the template as-is
+  try {
+    const url = host.startsWith('http') ? new URL(host) : new URL(`https://${host}`)
+    return url.hostname
+  } catch {
+    return host
+  }
+}
+
+// ─── localStorage-persisted boolean toggle ────────────────────────────────────
+
+function useLocalStorage(key: string, defaultValue: boolean): [boolean, (v: boolean | ((p: boolean) => boolean)) => void] {
+  const [value, setValue] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(key)
+      return stored !== null ? (JSON.parse(stored) as boolean) : defaultValue
+    } catch {
+      return defaultValue
+    }
+  })
+
+  const setAndPersist = useCallback((v: boolean | ((p: boolean) => boolean)) => {
+    setValue(prev => {
+      const next = typeof v === 'function' ? v(prev) : v
+      try { localStorage.setItem(key, JSON.stringify(next)) } catch { /* quota full etc. */ }
+      return next
+    })
+  }, [key])
+
+  return [value, setAndPersist]
 }
 
 // ─── Shared drag-to-resize hook ───────────────────────────────────────────────
@@ -543,8 +603,9 @@ function DetailPane({
 }
 
 // ─── Topology graph ───────────────────────────────────────────────────────────
-// Column layout: Triggers → Components → Resources → Variables
-// Service bindings will slot in as a new column between Resources and Variables.
+// Column layout: Triggers → Components → Resources (KV / SQLite / Outbound hosts) → Variables
+// Internal component calls (spin.internal / spin.alt) are rendered as looping
+// arcs on the right edge of the component column, not as separate nodes.
 
 // Standard node dimensions (triggers, components, resources)
 const NODE_H  = 56
@@ -554,6 +615,10 @@ const COL_GAP = 100
 const COMP_X  = NODE_W + COL_GAP
 const RES_X   = COMP_X + NODE_W + COL_GAP
 const PADDING = 24
+
+// How far (px) the internal-call arc bulges rightward past the component column.
+// Must stay within COL_GAP (100) to avoid overlapping the resource column.
+const INTERNAL_CALL_OFFSET = 44
 
 // Variable nodes are more compact so a long list doesn't tower over the rest.
 // The column sits further right to give the sweeping variable-binding arcs
@@ -597,6 +662,8 @@ type Selection =
   | { kind: 'trigger-group'; triggerType: string }
   | { kind: 'variable';      varName: string }
   | { kind: 'resource';      resKind: 'kv' | 'sqlite'; resName: string }
+  | { kind: 'outbound-host'; hostPattern: string }
+  | { kind: 'ai-model';      modelName: string }
 
 // Hover target — any node type.
 type ActiveTarget =
@@ -604,11 +671,15 @@ type ActiveTarget =
   | { kind: 'component';     componentId: string }
   | { kind: 'resource';      resKind: 'kv' | 'sqlite'; resName: string }
   | { kind: 'variable';      varName: string }
+  | { kind: 'outbound-host'; hostPattern: string }
+  | { kind: 'ai-model';      modelName: string }
 
 function selectionToActive(s: Selection): ActiveTarget {
-  if (s.kind === 'trigger-group') return { kind: 'trigger-group', triggerType: s.triggerType }
-  if (s.kind === 'variable')      return { kind: 'variable', varName: s.varName }
-  if (s.kind === 'resource')      return { kind: 'resource', resKind: s.resKind, resName: s.resName }
+  if (s.kind === 'trigger-group')  return { kind: 'trigger-group', triggerType: s.triggerType }
+  if (s.kind === 'variable')       return { kind: 'variable', varName: s.varName }
+  if (s.kind === 'resource')       return { kind: 'resource', resKind: s.resKind, resName: s.resName }
+  if (s.kind === 'outbound-host')  return { kind: 'outbound-host', hostPattern: s.hostPattern }
+  if (s.kind === 'ai-model')       return { kind: 'ai-model', modelName: s.modelName }
   return { kind: 'component', componentId: s.componentId }
 }
 
@@ -623,6 +694,30 @@ function componentUsesVar(c: ComponentInfo, varName: string): boolean {
   // Check mustache references in values: {{ varName }} (with optional spaces)
   const pattern = new RegExp(`\\{\\{\\s*${varName}\\s*\\}\\}`)
   return Object.values(vars).some(v => pattern.test(v))
+}
+
+// Small pill button used in column headers to show/hide a column.
+function TogglePill({
+  icon, label, active, color, onClick,
+}: {
+  icon: React.ReactNode
+  label: string
+  active: boolean
+  color: 'teal' | 'amber'
+  onClick: () => void
+}) {
+  const colors = color === 'teal'
+    ? 'hover:border-teal-300 hover:text-teal-600'
+    : 'hover:border-amber-300 hover:text-amber-600'
+  return (
+    <button
+      className={`normal-case font-normal text-[10px] px-1.5 py-0.5 rounded-md border border-gray-200 transition-colors flex items-center gap-1 ${colors} ${active ? 'opacity-60' : ''}`}
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+    </button>
+  )
 }
 
 function TopologyGraph({
@@ -656,29 +751,96 @@ function TopologyGraph({
     else triggerGroups.push({ type: t.type, triggers: [t] })
   }
 
-  // Resources (KV + SQLite)
+  // Resources (KV + SQLite + external outbound hosts)
   const kvStores  = [...new Set(components.flatMap(c => c.keyValueStores  ?? []))]
   const sqliteDbs = [...new Set(components.flatMap(c => c.sqliteDatabases ?? []))]
-  const resources = [
-    ...kvStores.map(n  => ({ kind: 'kv'     as const, name: n })),
-    ...sqliteDbs.map(n => ({ kind: 'sqlite' as const, name: n })),
+
+  const componentIds = new Set(components.map(c => c.id))
+
+  // Classify every allowed_outbound_hosts entry across all components:
+  //  • spin.internal / spin.alt (bare or with a {id}. subdomain) → internal edge
+  //  • everything else → external host node
+  // De-duplicate internal edges using a string-keyed Set.
+  type InternalEdge = { fromId: string; toId: string }
+  const internalEdgeSet = new Set<string>()
+  const internalEdgeList: InternalEdge[] = []
+  const extHostSet = new Set<string>()
+
+  for (const c of components) {
+    for (const host of (c.allowedOutboundHosts ?? [])) {
+      const target = internalCallTarget(host, componentIds)
+      if (target !== null) {
+        // Internal call: '*' = can reach all other components; else specific ID.
+        const targets = target === '*'
+          ? components.filter(o => o.id !== c.id).map(o => o.id)
+          : [target]
+        for (const toId of targets) {
+          const key = `${c.id}:${toId}`
+          if (!internalEdgeSet.has(key)) {
+            internalEdgeSet.add(key)
+            internalEdgeList.push({ fromId: c.id, toId })
+          }
+        }
+      } else {
+        extHostSet.add(host)
+      }
+    }
+  }
+  const extHostPatterns = [...extHostSet]
+  const hasInternalCalls = internalEdgeList.length > 0
+
+  // Visibility toggles — persisted so the user's preference survives page reloads.
+  const [showServices, setShowServices] = useLocalStorage('graph:show-services', true)
+  const [showVars,     setShowVars]     = useLocalStorage('graph:show-vars',     true)
+
+  // All unique AI model names across all components.
+  const allAiModels    = [...new Set(components.flatMap(c => c.aiModels ?? []))]
+  const hasOutboundHosts = extHostPatterns.length > 0
+  const hasAiModels      = allAiModels.length > 0
+
+  type Resource =
+    | { kind: 'kv';     name: string }
+    | { kind: 'sqlite'; name: string }
+    | { kind: 'ai';     name: string }
+    | { kind: 'host';   name: string }
+
+  // Full services list — visible only when the toggle is on.
+  const allServiceNodes: Resource[] = [
+    ...kvStores.map(n     => ({ kind: 'kv'     as const, name: n })),
+    ...sqliteDbs.map(n    => ({ kind: 'sqlite' as const, name: n })),
+    ...allAiModels.map(n  => ({ kind: 'ai'     as const, name: n })),
+    ...extHostPatterns.map(n => ({ kind: 'host' as const, name: n })),
   ]
-  const hasResources = resources.length > 0
+  const hasAnyServices = allServiceNodes.length > 0
+  const resources: Resource[] = showServices ? allServiceNodes : []
+  const hasResources   = resources.length > 0
 
   // Use app-level declared variables as nodes. Edges are drawn only to
   // components that have the variable wired in [component.id.variables].
-  const varNames = variableKeys
-  const hasVars  = varNames.length > 0
+  const varNames    = variableKeys
+  const hasVars     = varNames.length > 0
+  // showVarsCol drives layout: false collapses the entire Variables column.
+  const showVarsCol = hasVars && showVars
+
+  // Services column is visible when services are toggled on and there are any.
+  const showServicesColumn = hasAnyServices && showServices
+  // Alias used in layout calculations.
+  const showResourcesColumn = showServicesColumn
 
   // Canvas dimensions — groups replace individual triggers in the height calc.
-  const rightmostX = hasVars ? VAR_X : hasResources ? RES_X : COMP_X
-  const rightmostW = hasVars ? VAR_NODE_W : NODE_W
-  const svgW   = rightmostX + rightmostW + PADDING
+  const rightmostX = showVarsCol ? VAR_X : showResourcesColumn ? RES_X : COMP_X
+  const rightmostW = showVarsCol ? VAR_NODE_W : NODE_W
+  // When there are no resource / variable columns, the internal-call arcs
+  // protrude past the component column right edge — widen the canvas to fit.
+  const internalCallExtra = (hasInternalCalls && !showResourcesColumn && !showVarsCol)
+    ? INTERNAL_CALL_OFFSET + PADDING * 2
+    : 0
+  const svgW = rightmostX + rightmostW + PADDING + internalCallExtra
   const innerH = Math.max(
     colH(triggerGroups.length),
     colH(components.length),
     colH(resources.length),
-    varColH(varNames.length),
+    showVarsCol ? varColH(varNames.length) : 0,
   )
   const totalH = innerH + PADDING * 2
 
@@ -688,11 +850,12 @@ function TopologyGraph({
   const vOff = varColOff(varNames.length, totalH)
 
   const sharedCount = (kind: string, name: string) =>
-    components.filter(c =>
-      kind === 'kv'
-        ? (c.keyValueStores  ?? []).includes(name)
-        : (c.sqliteDatabases ?? []).includes(name)
-    ).length
+    components.filter(c => {
+      if (kind === 'kv')     return (c.keyValueStores     ?? []).includes(name)
+      if (kind === 'sqlite') return (c.sqliteDatabases    ?? []).includes(name)
+      if (kind === 'ai')     return (c.aiModels           ?? []).includes(name)
+      return (c.allowedOutboundHosts ?? []).includes(name)
+    }).length
 
   // ── Edge visibility helpers ───────────────────────────────────────────────
 
@@ -722,6 +885,31 @@ function TopologyGraph({
     return false
   }
 
+  // An internal-call arc between two components is lit when either endpoint is active.
+  const internalCallEdgeActive = (fromId: string, toId: string): boolean => {
+    if (!active) return false
+    if (active.kind === 'component')
+      return active.componentId === fromId || active.componentId === toId
+    return false
+  }
+
+  // A host edge is lit when the source component or the host node itself is active.
+  const hostEdgeActive = (compId: string, hostPattern: string): boolean => {
+    if (!active) return false
+    if (active.kind === 'component')     return active.componentId === compId
+    if (active.kind === 'trigger-group') return triggers.some(t => t.component === compId && t.type === active.triggerType)
+    if (active.kind === 'outbound-host') return active.hostPattern === hostPattern
+    return false
+  }
+
+  const aiEdgeActive = (compId: string, modelName: string): boolean => {
+    if (!active) return false
+    if (active.kind === 'component')     return active.componentId === compId
+    if (active.kind === 'trigger-group') return triggers.some(t => t.component === compId && t.type === active.triggerType)
+    if (active.kind === 'ai-model')      return active.modelName === modelName
+    return false
+  }
+
   // ── Node highlight helpers ────────────────────────────────────────────────
   // Returns 'hi' (primary), 'sec' (secondary/related), 'lo' (dimmed), or 'normal'.
 
@@ -743,12 +931,32 @@ function TopologyGraph({
         : components.filter(c => componentUsesVar(c, active.varName)).map(c => c.id)
       return groupCompIds(type).some(id => relatedCompIds.includes(id)) ? 'sec' : 'lo'
     }
+    if (active.kind === 'outbound-host') {
+      const relatedCompIds = components
+        .filter(c => (c.allowedOutboundHosts ?? []).includes(active.hostPattern))
+        .map(c => c.id)
+      return groupCompIds(type).some(id => relatedCompIds.includes(id)) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'ai-model') {
+      const relatedCompIds = components
+        .filter(c => (c.aiModels ?? []).includes(active.modelName))
+        .map(c => c.id)
+      return groupCompIds(type).some(id => relatedCompIds.includes(id)) ? 'sec' : 'lo'
+    }
     return 'lo'
   }
 
   const compState = (compId: string): NodeState => {
     if (!active) return 'normal'
-    if (active.kind === 'component')     return active.componentId === compId ? 'hi' : 'lo'
+    if (active.kind === 'component') {
+      if (active.componentId === compId) return 'hi'
+      // Highlight components that the active component calls, or that call it.
+      const linked = internalEdgeList.some(
+        e => (e.fromId === active.componentId && e.toId === compId)
+          || (e.fromId === compId && e.toId === active.componentId)
+      )
+      return linked ? 'sec' : 'lo'
+    }
     if (active.kind === 'trigger-group') return groupCompIds(active.triggerType).includes(compId) ? 'sec' : 'lo'
     if (active.kind === 'resource') {
       const comp = components.find(c => c.id === compId)
@@ -760,6 +968,48 @@ function TopologyGraph({
     if (active.kind === 'variable') {
       const comp = components.find(c => c.id === compId)
       return comp && componentUsesVar(comp, active.varName) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'outbound-host') {
+      const comp = components.find(c => c.id === compId)
+      return (comp?.allowedOutboundHosts ?? []).includes(active.hostPattern) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'ai-model') {
+      const comp = components.find(c => c.id === compId)
+      return (comp?.aiModels ?? []).includes(active.modelName) ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  const hostNodeState = (hostPattern: string): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'outbound-host') return active.hostPattern === hostPattern ? 'hi' : 'lo'
+    if (active.kind === 'component') {
+      const comp = components.find(c => c.id === active.componentId)
+      return (comp?.allowedOutboundHosts ?? []).includes(hostPattern) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'trigger-group') {
+      const compIds = groupCompIds(active.triggerType)
+      return compIds.some(id => {
+        const comp = components.find(c => c.id === id)
+        return (comp?.allowedOutboundHosts ?? []).includes(hostPattern)
+      }) ? 'sec' : 'lo'
+    }
+    return 'lo'
+  }
+
+  const aiModelState = (modelName: string): NodeState => {
+    if (!active) return 'normal'
+    if (active.kind === 'ai-model')  return active.modelName === modelName ? 'hi' : 'lo'
+    if (active.kind === 'component') {
+      const comp = components.find(c => c.id === active.componentId)
+      return (comp?.aiModels ?? []).includes(modelName) ? 'sec' : 'lo'
+    }
+    if (active.kind === 'trigger-group') {
+      const compIds = groupCompIds(active.triggerType)
+      return compIds.some(id => {
+        const comp = components.find(c => c.id === id)
+        return (comp?.aiModels ?? []).includes(modelName)
+      }) ? 'sec' : 'lo'
     }
     return 'lo'
   }
@@ -859,16 +1109,103 @@ function TopologyGraph({
     })
   })
 
+  // Internal-call arcs: component → component via spin.internal / spin.alt.
+  // Arcs bulge rightward by INTERNAL_CALL_OFFSET px and loop back — they stay
+  // within COL_GAP so they never overlap the resource column.
+  const COMP_RIGHT = COMP_X + PADDING + NODE_W
+  const internalCallEdges = internalEdgeList.flatMap(({ fromId, toId }) => {
+    const fromCi = components.findIndex(c => c.id === fromId)
+    const toCi   = components.findIndex(c => c.id === toId)
+    if (fromCi < 0 || toCi < 0) return []
+    return [{
+      fromCi, toCi,
+      x1: COMP_RIGHT, y1: nodeY(cOff, fromCi) + NODE_H / 2,
+      x2: COMP_RIGHT, y2: nodeY(cOff, toCi)   + NODE_H / 2,
+      on: internalCallEdgeActive(fromId, toId),
+    }]
+  })
+
+  // Edges from components to service nodes (only when services are visible).
+  const hostEdges: { x1: number; y1: number; x2: number; y2: number; on: boolean }[] = []
+  const aiEdges:   { x1: number; y1: number; x2: number; y2: number; on: boolean }[] = []
+  if (showServices) {
+    components.forEach((c, ci) => {
+      (c.allowedOutboundHosts ?? []).forEach(host => {
+        if (internalCallTarget(host, componentIds) !== null) return
+        const ri = resources.findIndex(r => r.kind === 'host' && r.name === host)
+        if (ri < 0) return
+        hostEdges.push({
+          x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
+          x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+          on: hostEdgeActive(c.id, host),
+        })
+      })
+      ;(c.aiModels ?? []).forEach(model => {
+        const ri = resources.findIndex(r => r.kind === 'ai' && r.name === model)
+        if (ri < 0) return
+        aiEdges.push({
+          x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
+          x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+          on: aiEdgeActive(c.id, model),
+        })
+      })
+    })
+  }
+
   const anyActive = active !== null
 
   return (
     <div className="overflow-x-auto">
-      {/* Column headers */}
-      <div className="flex text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3" style={{ paddingLeft: PADDING }}>
+      {/* Column headers + visibility toggles */}
+      <div className="flex items-center text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3" style={{ paddingLeft: PADDING }}>
         <div style={{ width: NODE_W + COL_GAP }}>Triggers</div>
-        <div style={{ width: NODE_W + (hasResources || hasVars ? COL_GAP : 0) }}>Components</div>
-        {hasResources && <div style={{ width: NODE_W + (hasVars ? VAR_COL_GAP : 0) }}>Resources</div>}
-        {hasVars && <div style={{ width: VAR_NODE_W }}>Variables</div>}
+        <div style={{ width: NODE_W + (showResourcesColumn || showVarsCol ? COL_GAP : 0) }}>Components</div>
+
+        {showServicesColumn && (
+          <div className="flex items-center gap-1.5" style={{ width: NODE_W + (showVarsCol ? VAR_COL_GAP : 0) }}>
+            <span>Services</span>
+            <TogglePill
+              icon={<Sparkles className="w-2.5 h-2.5" />}
+              label="Hide"
+              active={showServices}
+              color="teal"
+              onClick={() => setShowServices(s => !s)}
+            />
+          </div>
+        )}
+        {/* Services toggle floats here when the column is hidden */}
+        {hasAnyServices && !showServicesColumn && (
+          <TogglePill
+            icon={<Sparkles className="w-2.5 h-2.5" />}
+            label={`${allServiceNodes.length} services`}
+            active={false}
+            color="teal"
+            onClick={() => setShowServices(s => !s)}
+          />
+        )}
+
+        {showVarsCol && (
+          <div className="flex items-center gap-1.5" style={{ width: VAR_NODE_W }}>
+            <span>Variables</span>
+            <TogglePill
+              icon={<Key className="w-2.5 h-2.5" />}
+              label="Hide"
+              active={showVars}
+              color="amber"
+              onClick={() => setShowVars(v => !v)}
+            />
+          </div>
+        )}
+        {/* Vars toggle floats here when the Variables column is hidden */}
+        {hasVars && !showVarsCol && (
+          <TogglePill
+            icon={<Key className="w-2.5 h-2.5" />}
+            label={`${varNames.length} vars`}
+            active={false}
+            color="amber"
+            onClick={() => setShowVars(v => !v)}
+          />
+        )}
       </div>
 
       <div className="relative" style={{ width: svgW, height: totalH }}>
@@ -899,13 +1236,58 @@ function TopologyGraph({
               opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
             />
           ))}
-          {hasVars && varEdges.map((e, i) => (
+          {showVarsCol && varEdges.map((e, i) => (
             <path key={`ve-${i}`}
               d={bezBiased(e.x1, e.y1, e.x2, e.y2, 0.35)}
               fill="none"
               stroke="#d97706"
               strokeWidth={1.5}
               strokeDasharray="5 3"
+              style={{ transition: 'opacity 0.15s' }}
+              opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
+            />
+          ))}
+
+          {/* Internal-call arcs — looping curves on the right of the component column */}
+          {hasInternalCalls && internalCallEdges.map((e, i) => {
+            const path = `M ${e.x1} ${e.y1} C ${e.x1 + INTERNAL_CALL_OFFSET} ${e.y1} ${e.x2 + INTERNAL_CALL_OFFSET} ${e.y2} ${e.x2} ${e.y2}`
+            return (
+              <g key={`ic-${i}`} style={{ transition: 'opacity 0.15s' }} opacity={!anyActive ? 0 : e.on ? 0.9 : 0}>
+                <path
+                  d={path}
+                  fill="none"
+                  stroke="#06b6d4"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                />
+                {/* Arrow tip pointing left — arrives at (x2, y2) from the right */}
+                <polygon
+                  points={`${e.x2},${e.y2} ${e.x2 + 7},${e.y2 - 4} ${e.x2 + 7},${e.y2 + 4}`}
+                  fill="#06b6d4"
+                />
+              </g>
+            )
+          })}
+
+          {/* Outbound host edges — component → external host node */}
+          {hostEdges.map((e, i) => (
+            <path key={`he-${i}`}
+              d={bez(e.x1, e.y1, e.x2, e.y2)}
+              fill="none"
+              stroke="#14b8a6"
+              strokeWidth={1.5}
+              style={{ transition: 'opacity 0.15s' }}
+              opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
+            />
+          ))}
+
+          {/* AI model edges — component → AI model node */}
+          {aiEdges.map((e, i) => (
+            <path key={`ae-${i}`}
+              d={bez(e.x1, e.y1, e.x2, e.y2)}
+              fill="none"
+              stroke="#6366f1"
+              strokeWidth={1.5}
               style={{ transition: 'opacity 0.15s' }}
               opacity={!anyActive ? 0 : e.on ? 0.85 : 0}
             />
@@ -1027,8 +1409,91 @@ function TopologyGraph({
           )
         })}
 
-        {/* Resource nodes */}
+        {/* Resource nodes — KV stores and SQLite databases */}
         {hasResources && resources.map((r, ri) => {
+          if (r.kind === 'ai') {
+            // ── AI / LLM model node ───────────────────────────────────────
+            const state    = aiModelState(r.name)
+            const usedBy   = sharedCount('ai', r.name)
+            const isPinned = selected?.kind === 'ai-model' && selected.modelName === r.name
+            return (
+              <div key={`r-${ri}`}
+                className={`absolute flex items-center bg-white rounded-xl shadow-sm overflow-hidden border cursor-pointer transition-all ${
+                  state === 'hi'
+                    ? 'border-indigo-400 shadow-indigo-100 shadow-md ring-2 ring-indigo-300/60'
+                    : state === 'sec'
+                    ? 'border-indigo-300'
+                    : 'border-indigo-200 hover:border-indigo-300 hover:shadow'
+                }`}
+                style={{
+                  left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                  opacity: state === 'lo' ? 0.35 : 1,
+                  transition: 'opacity 0.15s, box-shadow 0.15s',
+                }}
+                onClick={() => onSelect(isPinned ? null : { kind: 'ai-model', modelName: r.name })}
+                onMouseEnter={() => setHovered({ kind: 'ai-model', modelName: r.name })}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <div className="w-10 h-full flex items-center justify-center shrink-0 border-r bg-indigo-50 border-indigo-100">
+                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                </div>
+                <div className="px-3 min-w-0 flex-1">
+                  <div className="text-xs font-bold text-gray-800 font-mono truncate" title={r.name}>
+                    {r.name}
+                  </div>
+                  <div className="text-xs text-indigo-400">
+                    AI Model
+                    {usedBy > 1 && <span className="ml-1.5 text-gray-400">· {usedBy} components</span>}
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          if (r.kind === 'host') {
+            // ── External outbound host node ────────────────────────────────
+            const isTemplate = isVariableTemplate(r.name)
+            const state    = hostNodeState(r.name)
+            const usedBy   = sharedCount('host', r.name)
+            const isPinned = selected?.kind === 'outbound-host' && selected.hostPattern === r.name
+            // Variable-template hosts use amber styling to match the variable theme.
+            const borderDef  = isTemplate ? 'border-amber-200 hover:border-amber-300 hover:shadow' : 'border-teal-200 hover:border-teal-300 hover:shadow'
+            const borderHi   = isTemplate ? 'border-amber-400 shadow-amber-100 shadow-md ring-2 ring-amber-300/60' : 'border-teal-400 shadow-teal-100 shadow-md ring-2 ring-teal-300/60'
+            const borderSec  = isTemplate ? 'border-amber-300' : 'border-teal-300'
+            const iconBgCls  = isTemplate ? 'bg-amber-50 border-amber-100' : 'bg-teal-50 border-teal-100'
+            const iconColor  = isTemplate ? 'text-amber-500' : 'text-teal-500'
+            const labelColor = isTemplate ? 'text-amber-400' : 'text-teal-400'
+            return (
+              <div key={`r-${ri}`}
+                className={`absolute flex items-center bg-white rounded-xl shadow-sm overflow-hidden border cursor-pointer transition-all ${
+                  state === 'hi' ? borderHi : state === 'sec' ? borderSec : borderDef
+                }`}
+                style={{
+                  left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                  opacity: state === 'lo' ? 0.35 : 1,
+                  transition: 'opacity 0.15s, box-shadow 0.15s',
+                }}
+                onClick={() => onSelect(isPinned ? null : { kind: 'outbound-host', hostPattern: r.name })}
+                onMouseEnter={() => setHovered({ kind: 'outbound-host', hostPattern: r.name })}
+                onMouseLeave={() => setHovered(null)}
+              >
+                <div className={`w-10 h-full flex items-center justify-center shrink-0 border-r ${iconBgCls}`}>
+                  <Globe className={`w-4 h-4 ${iconColor}`} />
+                </div>
+                <div className="px-3 min-w-0 flex-1">
+                  <div className="text-xs font-bold text-gray-800 font-mono truncate" title={r.name}>
+                    {hostNodeLabel(r.name)}
+                  </div>
+                  <div className={`text-xs ${labelColor}`}>
+                    {isTemplate ? 'Variable URL' : 'Outbound host'}
+                    {usedBy > 1 && <span className="ml-1.5 text-gray-400">· {usedBy} components</span>}
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          // ── KV / SQLite node ─────────────────────────────────────────────
           const isKV   = r.kind === 'kv'
           const state  = resourceState(r.kind, r.name)
           const usedBy = sharedCount(r.kind, r.name)
@@ -1066,7 +1531,7 @@ function TopologyGraph({
         })}
 
         {/* Variable nodes */}
-        {hasVars && varNames.map((varName, vi) => {
+        {showVarsCol && varNames.map((varName, vi) => {
           const usedBy = components.filter(c => componentUsesVar(c, varName))
           const state  = varState(varName)
           const isPinned = selected?.kind === 'variable' && selected.varName === varName
@@ -1105,23 +1570,48 @@ function TopologyGraph({
       </div>
 
       {/* Legend */}
-      <div className="flex items-center gap-5 mt-6 text-xs text-gray-400">
+      <div className="flex flex-wrap items-center gap-5 mt-6 text-xs text-gray-400">
         <div className="flex items-center gap-1.5">
           <svg width="24" height="10"><line x1="0" y1="5" x2="18" y2="5" stroke="#10b981" strokeWidth="1.5" /><polygon points="18,5 11,2 11,8" fill="#10b981" /></svg>
           Trigger route
         </div>
-        <div className="flex items-center gap-1.5">
-          <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#6b7280" strokeWidth="1.5" /></svg>
-          Resource access
-        </div>
-        <div className="flex items-center gap-1.5">
-          <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
-          Shared resource
-        </div>
-        {hasVars && (
+        {showServicesColumn && (
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#6b7280" strokeWidth="1.5" /></svg>
+            Service access
+          </div>
+        )}
+        {showServicesColumn && (
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
+            Shared service
+          </div>
+        )}
+        {showVarsCol && (
           <div className="flex items-center gap-1.5">
             <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#d97706" strokeWidth="1.5" strokeDasharray="5 3" /></svg>
             Variable binding
+          </div>
+        )}
+        {hasOutboundHosts && showServicesColumn && (
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#14b8a6" strokeWidth="1.5" /></svg>
+            Outbound host
+          </div>
+        )}
+        {hasAiModels && showServicesColumn && (
+          <div className="flex items-center gap-1.5">
+            <svg width="24" height="10"><line x1="0" y1="5" x2="20" y2="5" stroke="#6366f1" strokeWidth="1.5" /></svg>
+            AI model
+          </div>
+        )}
+        {hasInternalCalls && (
+          <div className="flex items-center gap-1.5">
+            <svg width="30" height="10">
+              <line x1="0" y1="5" x2="23" y2="5" stroke="#06b6d4" strokeWidth="1.5" strokeDasharray="4 3" />
+              <polygon points="23,5 16,2 16,8" fill="#06b6d4" />
+            </svg>
+            Internal call
           </div>
         )}
         <div className="flex items-center gap-1.5 text-gray-300">

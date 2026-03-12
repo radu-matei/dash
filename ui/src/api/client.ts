@@ -62,6 +62,7 @@ export interface ComponentInfo {
   allowedOutboundHosts?: string[]
   keyValueStores?: string[]
   sqliteDatabases?: string[]
+  aiModels?: string[]
   variables?: Record<string, string>
   files?: FileMount[]
   build?: BuildInfo
