@@ -628,7 +628,8 @@ const VAR_NODE_H  = 40
 const VAR_NODE_W  = 190
 const VAR_GAP     = 6
 const VAR_COL_GAP = 120
-const VAR_X       = RES_X + NODE_W + VAR_COL_GAP
+// Column X positions are computed dynamically inside TopologyGraph so columns
+// spread right into freed space when adjacent columns are toggled off.
 
 // Compound bezier with adjustable control-point bias.
 // bias=0.5 gives a symmetric S-curve; bias<0.5 pushes the bend towards x1.
@@ -791,7 +792,7 @@ function TopologyGraph({
 
   // Visibility toggles — persisted so the user's preference survives page reloads.
   const [showServices, setShowServices] = useLocalStorage('graph:show-services', true)
-  const [showVars,     setShowVars]     = useLocalStorage('graph:show-vars',     true)
+  const [showVars,     setShowVars]     = useLocalStorage('graph:show-vars',     false)
 
   // All unique AI model names across all components.
   const allAiModels    = [...new Set(components.flatMap(c => c.aiModels ?? []))]
@@ -827,8 +828,17 @@ function TopologyGraph({
   // Alias used in layout calculations.
   const showResourcesColumn = showServicesColumn
 
+  // varX: Variables column stays at its natural far-right position at all times.
+  const varX = RES_X + NODE_W + VAR_COL_GAP
+
+  // resX: When Variables are hidden, Services slides right to fill the freed space,
+  // matching the breathing room that the Variables column would have occupied.
+  const resX = showVarsCol
+    ? RES_X                          // Variables visible: Services at standard position
+    : RES_X + NODE_W + VAR_COL_GAP  // Variables hidden: Services shifts to VAR_X
+
   // Canvas dimensions — groups replace individual triggers in the height calc.
-  const rightmostX = showVarsCol ? VAR_X : showResourcesColumn ? RES_X : COMP_X
+  const rightmostX = showVarsCol ? varX : showResourcesColumn ? resX : COMP_X
   const rightmostW = showVarsCol ? VAR_NODE_W : NODE_W
   // When there are no resource / variable columns, the internal-call arcs
   // protrude past the component column right edge — widen the canvas to fit.
@@ -1080,7 +1090,7 @@ function TopologyGraph({
       const ri = resources.findIndex(r => r.kind === 'kv' && r.name === kv)
       if (ri >= 0) resourceEdges.push({
         x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
-        x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+        x2: resX  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
         shared: sharedCount('kv', kv) > 1, on: resourceEdgeActive(c.id, 'kv', kv),
       })
     })
@@ -1088,7 +1098,7 @@ function TopologyGraph({
       const ri = resources.findIndex(r => r.kind === 'sqlite' && r.name === db)
       if (ri >= 0) resourceEdges.push({
         x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
-        x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+        x2: resX  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
         shared: sharedCount('sqlite', db) > 1, on: resourceEdgeActive(c.id, 'sqlite', db),
       })
     })
@@ -1103,7 +1113,7 @@ function TopologyGraph({
       if (!componentUsesVar(c, varName)) return
       varEdges.push({
         x1: VAR_EDGE_X1,     y1: nodeY(cOff, ci)    + NODE_H     / 2,
-        x2: VAR_X + PADDING, y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
+        x2: varX + PADDING, y2: varNodeY(vOff, vi) + VAR_NODE_H / 2,
         on: varEdgeActive(c.id, varName),
       })
     })
@@ -1136,7 +1146,7 @@ function TopologyGraph({
         if (ri < 0) return
         hostEdges.push({
           x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
-          x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+          x2: resX  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
           on: hostEdgeActive(c.id, host),
         })
       })
@@ -1145,7 +1155,7 @@ function TopologyGraph({
         if (ri < 0) return
         aiEdges.push({
           x1: COMP_X + PADDING + NODE_W, y1: nodeY(cOff, ci) + NODE_H / 2,
-          x2: RES_X  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
+          x2: resX  + PADDING,          y2: nodeY(rOff, ri) + NODE_H / 2,
           on: aiEdgeActive(c.id, model),
         })
       })
@@ -1156,55 +1166,41 @@ function TopologyGraph({
 
   return (
     <div className="overflow-x-auto">
-      {/* Column headers + visibility toggles */}
-      <div className="flex items-center text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3" style={{ paddingLeft: PADDING }}>
-        <div style={{ width: NODE_W + COL_GAP }}>Triggers</div>
-        <div style={{ width: NODE_W + (showResourcesColumn || showVarsCol ? COL_GAP : 0) }}>Components</div>
-
-        {showServicesColumn && (
-          <div className="flex items-center gap-1.5" style={{ width: NODE_W + (showVarsCol ? VAR_COL_GAP : 0) }}>
-            <span>Services</span>
+      {/* Visibility toggle pill bar — always in the same place regardless of column layout */}
+      {(hasAnyServices || hasVars) && (
+        <div className="flex items-center gap-2 mb-2.5" style={{ paddingLeft: PADDING }}>
+          {hasAnyServices && (
             <TogglePill
               icon={<Sparkles className="w-2.5 h-2.5" />}
-              label="Hide"
+              label={showServices ? 'Services' : `${allServiceNodes.length} services`}
               active={showServices}
               color="teal"
               onClick={() => setShowServices(s => !s)}
             />
-          </div>
-        )}
-        {/* Services toggle floats here when the column is hidden */}
-        {hasAnyServices && !showServicesColumn && (
-          <TogglePill
-            icon={<Sparkles className="w-2.5 h-2.5" />}
-            label={`${allServiceNodes.length} services`}
-            active={false}
-            color="teal"
-            onClick={() => setShowServices(s => !s)}
-          />
-        )}
-
-        {showVarsCol && (
-          <div className="flex items-center gap-1.5" style={{ width: VAR_NODE_W }}>
-            <span>Variables</span>
+          )}
+          {hasVars && (
             <TogglePill
               icon={<Key className="w-2.5 h-2.5" />}
-              label="Hide"
+              label={showVars ? 'Variables' : `${varNames.length} vars`}
               active={showVars}
               color="amber"
               onClick={() => setShowVars(v => !v)}
             />
-          </div>
+          )}
+        </div>
+      )}
+
+      {/* Column headers — absolutely positioned to stay aligned with their nodes
+          even as columns shift position when toggled on or off. */}
+      <div className="relative mb-3 text-xs font-semibold text-gray-400 uppercase tracking-wider"
+           style={{ height: 16, width: svgW }}>
+        <span className="absolute" style={{ left: PADDING }}>Triggers</span>
+        <span className="absolute" style={{ left: COMP_X + PADDING }}>Components</span>
+        {showServicesColumn && (
+          <span className="absolute" style={{ left: resX + PADDING }}>Services</span>
         )}
-        {/* Vars toggle floats here when the Variables column is hidden */}
-        {hasVars && !showVarsCol && (
-          <TogglePill
-            icon={<Key className="w-2.5 h-2.5" />}
-            label={`${varNames.length} vars`}
-            active={false}
-            color="amber"
-            onClick={() => setShowVars(v => !v)}
-          />
+        {showVarsCol && (
+          <span className="absolute" style={{ left: varX + PADDING }}>Variables</span>
         )}
       </div>
 
@@ -1426,7 +1422,7 @@ function TopologyGraph({
                     : 'border-indigo-200 hover:border-indigo-300 hover:shadow'
                 }`}
                 style={{
-                  left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                  left: resX + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
                   opacity: state === 'lo' ? 0.35 : 1,
                   transition: 'opacity 0.15s, box-shadow 0.15s',
                 }}
@@ -1469,7 +1465,7 @@ function TopologyGraph({
                   state === 'hi' ? borderHi : state === 'sec' ? borderSec : borderDef
                 }`}
                 style={{
-                  left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                  left: resX + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
                   opacity: state === 'lo' ? 0.35 : 1,
                   transition: 'opacity 0.15s, box-shadow 0.15s',
                 }}
@@ -1508,7 +1504,7 @@ function TopologyGraph({
                   : (isKV ? 'border-purple-200 hover:border-purple-300 hover:shadow' : 'border-blue-200 hover:border-blue-300 hover:shadow')
               }`}
               style={{
-                left: RES_X + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
+                left: resX + PADDING, top: nodeY(rOff, ri), width: NODE_W, height: NODE_H,
                 opacity: state === 'lo' ? 0.35 : 1,
                 transition: 'opacity 0.15s, box-shadow 0.15s',
               }}
@@ -1545,7 +1541,7 @@ function TopologyGraph({
                   : 'border-amber-200 shadow-sm hover:border-amber-300 hover:shadow'
               }`}
               style={{
-                left: VAR_X + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H,
+                left: varX + PADDING, top: varNodeY(vOff, vi), width: VAR_NODE_W, height: VAR_NODE_H,
                 opacity: state === 'lo' ? 0.35 : 1,
                 transition: 'opacity 0.15s, box-shadow 0.15s',
               }}
