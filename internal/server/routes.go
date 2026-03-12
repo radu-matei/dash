@@ -329,11 +329,11 @@ func addBindingHandler(opts *Options, cfgMu *sync.RWMutex) http.HandlerFunc {
 			return
 		}
 
-		var req struct {
-			ComponentID string `json:"componentId"`
-			Type        string `json:"type"`      // "kv" | "sqlite"
-			StoreName   string `json:"storeName"` // store / db name
-		}
+	var req struct {
+		ComponentID string `json:"componentId"`
+		Type        string `json:"type"`      // "kv" | "sqlite" | "ai" | "outbound-host"
+		StoreName   string `json:"storeName"` // store / db / model name or URL pattern
+	}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
@@ -350,8 +350,12 @@ func addBindingHandler(opts *Options, cfgMu *sync.RWMutex) http.HandlerFunc {
 			added, patchErr = config.PatchAddKVBinding(opts.Dir, req.ComponentID, req.StoreName)
 		case "sqlite":
 			added, patchErr = config.PatchAddSQLiteBinding(opts.Dir, req.ComponentID, req.StoreName)
+		case "ai":
+			added, patchErr = config.PatchAddAIBinding(opts.Dir, req.ComponentID, req.StoreName)
+		case "outbound-host":
+			added, patchErr = config.PatchAddOutboundHostBinding(opts.Dir, req.ComponentID, req.StoreName)
 		default:
-			jsonErr(w, http.StatusBadRequest, `type must be "kv" or "sqlite"`)
+			jsonErr(w, http.StatusBadRequest, `type must be "kv", "sqlite", "ai", or "outbound-host"`)
 			return
 		}
 		if patchErr != nil {

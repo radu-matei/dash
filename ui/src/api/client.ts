@@ -62,6 +62,7 @@ export interface ComponentInfo {
   allowedOutboundHosts?: string[]
   keyValueStores?: string[]
   sqliteDatabases?: string[]
+  aiModels?: string[]
   variables?: Record<string, string>
   files?: FileMount[]
   build?: BuildInfo
@@ -219,10 +220,11 @@ export const addVariable = (
   componentIds: string[],
 ) => post<MutationResult>('/api/add-variable', { name, defaultValue, required, secret, componentIds })
 
-/** Add a KV store or SQLite binding to a component in spin.toml and restart Spin. */
+/** Add a service binding to a component in spin.toml and restart Spin.
+ *  type: 'kv' | 'sqlite' | 'ai' | 'outbound-host' */
 export const addBinding = (
   componentId: string,
-  type: 'kv' | 'sqlite',
+  type: 'kv' | 'sqlite' | 'ai' | 'outbound-host',
   storeName: string,
 ) => post<MutationResult>('/api/add-binding', { componentId, type, storeName })
 
