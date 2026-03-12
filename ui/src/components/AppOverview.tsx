@@ -1897,6 +1897,157 @@ function ResourcePane({
   )
 }
 
+// ─── Service pane (AI model / outbound host) ──────────────────────────────────
+
+function ServicePane({
+  kind, name, components, onClose, onSelect, paneWidth, onPaneWidthChange,
+}: {
+  kind: 'ai-model' | 'outbound-host'
+  name: string
+  components: ComponentInfo[]
+  onClose: () => void
+  onSelect: (s: Selection) => void
+  paneWidth: number
+  onPaneWidthChange: (w: number) => void
+}) {
+  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
+
+  const isAI       = kind === 'ai-model'
+  const isTemplate = !isAI && isVariableTemplate(name)
+
+  const usedBy = components.filter(c =>
+    isAI
+      ? (c.aiModels           ?? []).includes(name)
+      : (c.allowedOutboundHosts ?? []).includes(name)
+  )
+
+  // Colour theme
+  const accent = isAI ? 'indigo' : isTemplate ? 'amber' : 'teal'
+  const dragHover   = `hover:bg-${accent}-300/60`
+  const iconBg      = `bg-${accent}-100`
+  const iconColor   = `text-${accent}-600`
+  const infoBox     = `bg-${accent}-50 border-${accent}-100`
+  const infoTitle   = `text-${accent}-800`
+  const infoText    = `text-${accent}-700`
+  const infoLink    = `text-${accent}-600 hover:text-${accent}-800`
+
+  return (
+    <div
+      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
+      style={{ width: paneWidth }}
+    >
+      {/* Drag handle */}
+      <div
+        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors ${dragHover}`}
+        onMouseDown={handleDragMouseDown}
+      />
+
+      {/* Header */}
+      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
+            {isAI
+              ? <Sparkles className={`w-4 h-4 ${iconColor}`} />
+              : <Globe    className={`w-4 h-4 ${iconColor}`} />}
+          </div>
+          <div className="min-w-0">
+            <div className="text-base font-bold text-gray-900 font-mono truncate" title={name}>
+              {isAI ? name : hostNodeLabel(name)}
+            </div>
+            <div className={`text-xs mt-0.5 font-medium text-${accent}-500`}>
+              {isAI ? 'AI / LLM Model' : isTemplate ? 'Variable URL' : hostDescription(name)}
+            </div>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-6">
+
+        {/* Full pattern (outbound host only, when the label was shortened) */}
+        {!isAI && hostNodeLabel(name) !== name && (
+          <div className="bg-white border border-gray-200 rounded-xl px-3 py-2.5">
+            <p className="text-[10px] text-gray-400 uppercase font-semibold mb-1">Full pattern</p>
+            <code className="text-xs font-mono text-gray-700 break-all">{name}</code>
+          </div>
+        )}
+
+        {/* Components using this service */}
+        <PaneSection
+          title={isAI ? 'Components using this model' : 'Components allowed to call this host'}
+          Icon={Package}
+          count={usedBy.length}
+        >
+          {usedBy.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No components bound yet.</p>
+          ) : usedBy.map(c => (
+            <button
+              key={c.id}
+              className="w-full flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 text-left hover:border-gray-300 hover:bg-gray-50 transition-colors"
+              onClick={() => onSelect({ kind: 'component', componentId: c.id })}
+            >
+              <Package className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <code className="text-xs font-mono text-gray-800 flex-1">{c.id}</code>
+              {(() => { const lang = detectLang(c); return lang ? <LangIcon comp={c} size={14} /> : null })()}
+              <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+            </button>
+          ))}
+        </PaneSection>
+
+        {/* Info box */}
+        <div className={`border rounded-xl p-3 space-y-1.5 text-xs ${infoBox}`}>
+          {isAI ? (
+            <>
+              <p className={`font-semibold ${infoTitle}`}>About AI / LLM models</p>
+              <p className={infoText}>
+                The <code className={`font-mono bg-${accent}-100 px-1 rounded`}>ai_models</code> field
+                grants a component access to Spin's built-in LLM inferencing API. The label must match
+                a model available on the Spin runtime (e.g. <code className={`font-mono bg-${accent}-100 px-1 rounded`}>llama2-chat</code>).
+              </p>
+              <a
+                href="https://spinframework.dev/v3/ai-sentiment-analysis-api-tutorial"
+                target="_blank"
+                rel="noreferrer"
+                className={`inline-flex items-center gap-1 underline ${infoLink}`}
+              >
+                LLM API docs <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          ) : isTemplate ? (
+            <>
+              <p className={`font-semibold ${infoTitle}`}>Variable-substituted URL</p>
+              <p className={infoText}>
+                This host pattern contains a variable reference resolved at runtime.
+                Make sure the variable is set to a valid URL so Spin can allow the outbound connection.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className={`font-semibold ${infoTitle}`}>About allowed outbound hosts</p>
+              <p className={infoText}>
+                Spin enforces an outbound network allowlist. Only URLs matching a declared
+                pattern are reachable from the component. Use <code className={`font-mono bg-${accent}-100 px-1 rounded`}>*</code> to
+                allow all hosts, or scope to a specific domain.
+              </p>
+              <a
+                href="https://spinframework.dev/v3/writing-apps#granting-networking-permissions-to-components"
+                target="_blank"
+                rel="noreferrer"
+                className={`inline-flex items-center gap-1 underline ${infoLink}`}
+              >
+                Networking docs <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Trigger pane ─────────────────────────────────────────────────────────────
 
 function TriggerPane({
@@ -2077,6 +2228,8 @@ export default function AppOverview() {
   const selectedVarName     = selected?.kind === 'variable'      ? selected.varName     : null
   const selectedTriggerType = selected?.kind === 'trigger-group' ? selected.triggerType : null
   const selectedResource    = selected?.kind === 'resource'      ? selected             : null
+  const selectedAiModel     = selected?.kind === 'ai-model'      ? selected.modelName   : null
+  const selectedHostPattern  = selected?.kind === 'outbound-host' ? selected.hostPattern : null
 
   return (
     <div className="flex-1 overflow-hidden flex flex-col">
@@ -2276,6 +2429,19 @@ export default function AppOverview() {
           <ResourcePane
             resKind={selectedResource.resKind}
             resName={selectedResource.resName}
+            components={components}
+            onClose={() => setSelected(null)}
+            onSelect={setSelected}
+            paneWidth={paneWidth}
+            onPaneWidthChange={setPaneWidth}
+          />
+        )}
+
+        {/* Detail pane — AI model or outbound host */}
+        {(selectedAiModel !== null || selectedHostPattern !== null) && (
+          <ServicePane
+            kind={selectedAiModel !== null ? 'ai-model' : 'outbound-host'}
+            name={(selectedAiModel ?? selectedHostPattern)!}
             components={components}
             onClose={() => setSelected(null)}
             onSelect={setSelected}
