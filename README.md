@@ -24,7 +24,7 @@ spin plugins install dashboard
 Or install the latest canary build:
 
 ```bash
-spin plugins install --url https://github.com/spinframework/dash/releases/download/canary/dashboard.json
+spin plugins install --url https://github.com/radu-matei/dash/releases/download/canary/dashboard.json
 ```
 
 ## Usage
