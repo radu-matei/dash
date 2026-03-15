@@ -4,6 +4,7 @@ import { ArrowDown, Braces, ChevronDown, ChevronRight, Clock, Cpu, Search, Setti
 import { useLogStore } from '../store/logContext'
 import { useAppStore } from '../store/appContext'
 import type { LogLine } from '../api/client'
+import { componentTw } from '../componentColors'
 
 // ─── ANSI stripping ───────────────────────────────────────────────────────────
 
@@ -148,18 +149,6 @@ function HttpCell({ l }: { l: ParsedLine }) {
 }
 
 // ─── Component color palette ──────────────────────────────────────────────────
-
-const PALETTE = [
-  { dot: 'bg-blue-500',    text: 'text-blue-600',    active: 'border-b-2 border-blue-500'    },
-  { dot: 'bg-violet-500',  text: 'text-violet-600',  active: 'border-b-2 border-violet-500'  },
-  { dot: 'bg-emerald-500', text: 'text-emerald-600', active: 'border-b-2 border-emerald-500' },
-  { dot: 'bg-amber-500',   text: 'text-amber-600',   active: 'border-b-2 border-amber-500'   },
-  { dot: 'bg-pink-500',    text: 'text-pink-600',    active: 'border-b-2 border-pink-500'    },
-  { dot: 'bg-teal-500',    text: 'text-teal-600',    active: 'border-b-2 border-teal-500'    },
-  { dot: 'bg-orange-500',  text: 'text-orange-600',  active: 'border-b-2 border-orange-500'  },
-  { dot: 'bg-indigo-500',  text: 'text-indigo-600',  active: 'border-b-2 border-indigo-500'  },
-]
-function palette(idx: number) { return PALETTE[idx % PALETTE.length] }
 
 // ─── JSON detection & grouping ────────────────────────────────────────────────
 
@@ -609,12 +598,12 @@ export default function LogViewer() {
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto">
+      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto scrollbar-hide h-[37px]">
 
         {/* Spin tab */}
         <button
           onClick={() => setActiveTab('spin')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors mr-1
+          className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors mr-1
             ${activeTab === 'spin'
               ? 'border-b-2 border-spin-oxfordblue text-spin-oxfordblue bg-white -mb-px'
               : 'text-gray-500 hover:text-gray-700'
@@ -629,8 +618,8 @@ export default function LogViewer() {
         </button>
 
         {/* Component tabs */}
-        {compIds.map((id, idx) => {
-          const pal    = palette(idx)
+        {compIds.map((id) => {
+          const pal    = componentTw(id)
           const status = compStatuses[id] ?? 'idle'
           const errs   = compErrors(id)
           const isActive = activeTab === id
@@ -638,7 +627,7 @@ export default function LogViewer() {
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors
+              className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors
                 ${isActive
                   ? `bg-white -mb-px ${pal.active} ${pal.text}`
                   : 'text-gray-500 hover:text-gray-700'

@@ -6,15 +6,11 @@ import {
 } from 'lucide-react'
 import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
 import ComponentTabs from './ComponentTabs'
+import { componentHex } from '../componentColors'
 import { useLogStore } from '../store/logContext'
 import { parseLogLine, type ParsedLine } from './LogViewer'
 
 // ─── Color palette ────────────────────────────────────────────────────────────
-
-const PALETTE = [
-  '#0284c7', '#7c3aed', '#059669', '#d97706',
-  '#0891b2', '#db2777', '#65a30d', '#ea580c',
-]
 
 function buildColorMap(spans: Span[]): Map<string, string> {
   const EXEC_PREFIX = 'execute_wasm_component '
@@ -23,9 +19,8 @@ function buildColorMap(spans: Span[]): Map<string, string> {
     if (s.component) set.add(s.component)
     if (s.name?.startsWith(EXEC_PREFIX)) set.add(s.name.slice(EXEC_PREFIX.length).trim())
   }
-  const comps = Array.from(set).sort()
   const m = new Map<string, string>()
-  comps.forEach((c, i) => m.set(c, PALETTE[i % PALETTE.length]))
+  for (const c of set) m.set(c, componentHex(c))
   return m
 }
 

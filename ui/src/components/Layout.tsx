@@ -140,8 +140,8 @@ export default function Layout() {
         </div>
 
         {/* Status banner */}
-        <div className={`flex items-center border-b border-white/[0.08] bg-white/[0.03] shrink-0 ${
-          collapsed ? 'justify-center px-0 py-2.5' : 'gap-2.5 px-4 py-2.5'
+        <div className={`flex items-center border-b border-white/[0.08] bg-white/[0.03] shrink-0 h-[37px] ${
+          collapsed ? 'justify-center px-0' : 'gap-2.5 px-4'
         }`}>
           <span className={`status-dot ${STATUS_COLORS[status]}`} title={collapsed ? STATUS_LABELS[status] : undefined} />
           {!collapsed && (

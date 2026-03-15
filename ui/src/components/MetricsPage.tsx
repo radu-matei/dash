@@ -12,6 +12,7 @@ import {
   type Span, type MetricSeries,
 } from '../api/client'
 import ComponentTabs from './ComponentTabs'
+import { componentHex } from '../componentColors'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -122,7 +123,6 @@ function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; titl
 const TT = { contentStyle: { fontSize: 11, borderRadius: 8, border: '1px solid #e5e7eb' }, labelStyle: { fontWeight: 600 } }
 
 // Consistent color palette shared across component pills, chart lines, and bars
-const COMP_PALETTE = ['#7c3aed', '#0284c7', '#059669', '#d97706', '#db2777', '#0891b2', '#65a30d', '#ea580c']
 
 // ─── OTel metrics section ─────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
 
   const colorMap = useMemo(() => {
     const m = new Map<string, string>()
-    allComponents.forEach((c, i) => m.set(c, COMP_PALETTE[i % COMP_PALETTE.length]))
+    allComponents.forEach(c => m.set(c, componentHex(c)))
     return m
   }, [allComponents])
 

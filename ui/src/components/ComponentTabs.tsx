@@ -1,19 +1,7 @@
 import { Cpu } from 'lucide-react'
+import { componentTw, TW_PALETTE } from '../componentColors'
 
-const PALETTE = [
-  { dot: 'bg-blue-500',    text: 'text-blue-600',    active: 'border-b-2 border-blue-500'    },
-  { dot: 'bg-violet-500',  text: 'text-violet-600',  active: 'border-b-2 border-violet-500'  },
-  { dot: 'bg-emerald-500', text: 'text-emerald-600', active: 'border-b-2 border-emerald-500' },
-  { dot: 'bg-amber-500',   text: 'text-amber-600',   active: 'border-b-2 border-amber-500'   },
-  { dot: 'bg-pink-500',    text: 'text-pink-600',    active: 'border-b-2 border-pink-500'    },
-  { dot: 'bg-teal-500',    text: 'text-teal-600',    active: 'border-b-2 border-teal-500'    },
-  { dot: 'bg-orange-500',  text: 'text-orange-600',  active: 'border-b-2 border-orange-500'  },
-  { dot: 'bg-indigo-500',  text: 'text-indigo-600',  active: 'border-b-2 border-indigo-500'  },
-]
-
-function pal(idx: number) { return PALETTE[idx % PALETTE.length] }
-
-export { PALETTE as COMPONENT_PALETTE, pal as componentPalette }
+export { TW_PALETTE as COMPONENT_PALETTE, componentTw as componentPalette }
 
 interface Props {
   componentIds: string[]
@@ -27,11 +15,11 @@ interface Props {
 
 export default function ComponentTabs({ componentIds, activeTab, onTabChange, allTab, trailing }: Props) {
   return (
-    <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto">
+    <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto scrollbar-hide h-[37px]">
       {allTab && (
         <button
           onClick={() => onTabChange('all')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors mr-1
+          className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors mr-1
             ${activeTab === 'all'
               ? 'border-b-2 border-spin-oxfordblue text-spin-oxfordblue bg-white -mb-px'
               : 'text-gray-500 hover:text-gray-700'
@@ -41,14 +29,14 @@ export default function ComponentTabs({ componentIds, activeTab, onTabChange, al
         </button>
       )}
 
-      {componentIds.map((id, idx) => {
-        const p = pal(idx)
+      {componentIds.map((id) => {
+        const p = componentTw(id)
         const isActive = activeTab === id
         return (
           <button
             key={id}
             onClick={() => onTabChange(id)}
-            className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors
+            className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors
               ${isActive
                 ? `bg-white -mb-px ${p.active} ${p.text}`
                 : 'text-gray-500 hover:text-gray-700'

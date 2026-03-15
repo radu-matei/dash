@@ -145,6 +145,15 @@
     @apply text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-3 mb-1;
   }
 
+  /* ── Hidden scrollbar (scroll still works) ──────── */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
   /* ── Skeleton ───────────────────────────────────── */
   .skeleton {
     background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
