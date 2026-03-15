@@ -18,14 +18,17 @@ const POLL_SLOW = 10_000  // ms — once running and address is known
 interface AppContextValue {
   app: AppInfo | null
   refresh: () => void
+  /** Signal that Spin is restarting — clears listenAddr and fast-polls until it's back. */
+  notifyRestart: () => void
 }
 
-const AppCtx = createContext<AppContextValue>({ app: null, refresh: () => {} })
+const AppCtx = createContext<AppContextValue>({ app: null, refresh: () => {}, notifyRestart: () => {} })
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [app, setApp] = useState<AppInfo | null>(null)
   const [tick, setTick] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const restartingRef = useRef(false)
 
   useEffect(() => {
     let active = true
@@ -35,14 +38,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getApp(ctrl.signal)
         .then(info => {
           if (!active) return
-          setApp(info)
-          // Schedule the next poll based on whether we have all the info we need.
-          const settled = info.status === 'running' && !!info.listenAddr
+          if (restartingRef.current) {
+            if (info.listenAddr) {
+              restartingRef.current = false
+              setApp(info)
+            } else {
+              setApp(prev => prev ? { ...prev, ...info, listenAddr: undefined, status: 'starting' } : info)
+            }
+          } else {
+            setApp(info)
+          }
+          const settled = !restartingRef.current && info.status === 'running' && !!info.listenAddr
           timerRef.current = setTimeout(fetchNow, settled ? POLL_SLOW : POLL_FAST)
         })
         .catch(() => {
           if (!active) return
-          // Retry quickly on error (server may not be ready yet).
           timerRef.current = setTimeout(fetchNow, POLL_FAST)
         })
     }
@@ -61,7 +71,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTick(t => t + 1)
   }, [])
 
-  return <AppCtx.Provider value={{ app, refresh }}>{children}</AppCtx.Provider>
+  const notifyRestart = useCallback(() => {
+    restartingRef.current = true
+    setApp(prev => prev ? { ...prev, listenAddr: undefined, status: 'starting' } : prev)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setTick(t => t + 1), 500)
+  }, [])
+
+  return <AppCtx.Provider value={{ app, refresh, notifyRestart }}>{children}</AppCtx.Provider>
 }
 
 export const useAppStore = () => useContext(AppCtx)

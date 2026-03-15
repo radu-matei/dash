@@ -2137,7 +2137,7 @@ function TriggerPane({
 
 
 export default function AppOverview() {
-  const { app, refresh }    = useAppStore()
+  const { app, refresh, notifyRestart } = useAppStore()
   const [searchParams, setSearchParams] = useSearchParams()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
@@ -2322,7 +2322,8 @@ export default function AppOverview() {
               onClick={async () => {
                 setRestarting(true)
                 try { await restartSpin() } catch { /* ignore */ }
-                setTimeout(() => { setRestarting(false); refresh() }, 2000)
+                notifyRestart()
+                setTimeout(() => setRestarting(false), 2000)
               }}
               title="Restart the Spin process"
             >
@@ -2348,7 +2349,8 @@ export default function AppOverview() {
                     setRestartMenuOpen(false)
                     setRestarting(true)
                     try { await buildAndRestart() } catch { /* ignore */ }
-                    setTimeout(() => { setRestarting(false); refresh() }, 2000)
+                    notifyRestart()
+                    setTimeout(() => setRestarting(false), 2000)
                   }}
                 >
                   <Hammer className="w-3.5 h-3.5 shrink-0 text-gray-500" />

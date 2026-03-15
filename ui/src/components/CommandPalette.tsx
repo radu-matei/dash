@@ -85,7 +85,7 @@ function CommandPaletteInner({
   onOpen: () => void
 }) {
   const navigate = useNavigate()
-  const { app } = useAppStore()
+  const { app, notifyRestart } = useAppStore()
   const { clear: clearLogs } = useLogStore()
 
   const [query, setQuery] = useState('')
@@ -114,17 +114,17 @@ function CommandPaletteInner({
       if (!isOpen && (e.metaKey || e.ctrlKey) && e.shiftKey) {
         if (e.key === 'r' || e.key === 'R') {
           e.preventDefault()
-          restartSpin().catch(() => {})
+          restartSpin().catch(() => {}); notifyRestart()
         }
         if (e.key === 'b' || e.key === 'B') {
           e.preventDefault()
-          buildAndRestart().catch(() => {})
+          buildAndRestart().catch(() => {}); notifyRestart()
         }
       }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [isOpen, onClose, onOpen])
+  }, [isOpen, onClose, onOpen, notifyRestart])
 
   // ── Build result items ─────────────────────────────────────────────────────
 
@@ -153,8 +153,8 @@ function CommandPaletteInner({
 
     // ── Actions ────────────────────────────────────────────────────────────
     const actions: PaletteItem[] = [
-      { id: 'a-restart', category: 'action', label: 'Restart Spin', description: 'Restart the Spin process', Icon: RefreshCw, shortcut: `${modKey}⇧R`, onSelect: () => exec(() => { restartSpin().catch(() => {}) }) },
-      { id: 'a-build', category: 'action', label: 'Build & Restart', description: 'Run spin build, then restart', Icon: Hammer, shortcut: `${modKey}⇧B`, onSelect: () => exec(() => { buildAndRestart().catch(() => {}) }) },
+      { id: 'a-restart', category: 'action', label: 'Restart Spin', description: 'Restart the Spin process', Icon: RefreshCw, shortcut: `${modKey}⇧R`, onSelect: () => exec(() => { restartSpin().catch(() => {}); notifyRestart() }) },
+      { id: 'a-build', category: 'action', label: 'Build & Restart', description: 'Run spin build, then restart', Icon: Hammer, shortcut: `${modKey}⇧B`, onSelect: () => exec(() => { buildAndRestart().catch(() => {}); notifyRestart() }) },
       { id: 'a-clear-logs', category: 'action', label: 'Clear Logs', description: 'Clear all log output', Icon: Trash2, onSelect: () => exec(clearLogs) },
       { id: 'a-error-traces', category: 'action', label: 'Show Error Traces', description: 'View traces with errors', Icon: Zap, onSelect: () => exec(() => navigate('/traces?errors=1')) },
     ]

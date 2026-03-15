@@ -147,7 +147,8 @@ func (r *Runner) Restart() error {
 	}
 
 	// Reset per-run state so the new process starts fresh.
-	r.listenAddr.Store("")
+	// Must store nil (not "") so the pipe() nil-check re-enables address detection.
+	r.listenAddr = atomic.Value{}
 	r.err.Store("")
 
 	return r.Start()
