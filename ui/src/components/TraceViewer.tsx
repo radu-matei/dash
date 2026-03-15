@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Activity, AlertCircle, ChevronDown, ChevronRight,
+  Activity, AlertCircle, ChevronDown, ChevronRight, Cpu,
   ExternalLink, FlaskConical, RefreshCw, Search, X,
 } from 'lucide-react'
 import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
@@ -17,9 +17,15 @@ const PALETTE = [
 ]
 
 function buildColorMap(spans: Span[]): Map<string, string> {
-  const comps = Array.from(new Set(spans.map(s => s.component).filter(Boolean))).sort()
+  const EXEC_PREFIX = 'execute_wasm_component '
+  const set = new Set<string>()
+  for (const s of spans) {
+    if (s.component) set.add(s.component)
+    if (s.name?.startsWith(EXEC_PREFIX)) set.add(s.name.slice(EXEC_PREFIX.length).trim())
+  }
+  const comps = Array.from(set).sort()
   const m = new Map<string, string>()
-  comps.forEach((c, i) => m.set(c!, PALETTE[i % PALETTE.length]))
+  comps.forEach((c, i) => m.set(c, PALETTE[i % PALETTE.length]))
   return m
 }
 
@@ -29,6 +35,8 @@ export interface TraceGroup {
   traceId: string
   rootName: string
   component: string
+  /** All unique components that contributed spans to this trace. */
+  components: Set<string>
   startMs: number
   endMs: number
   durationMs: number
@@ -72,9 +80,18 @@ function groupTraces(spans: Span[], routeMap: Map<string, string>): TraceGroup[]
       execComponent ??
       sorted.find(s => s.component && s.component !== 'spin')?.component ??
       root?.component ?? ''
+    const EXEC_PREFIX = 'execute_wasm_component '
+    const components = new Set<string>()
+    for (const s of sorted) {
+      if (s.component && s.component !== 'spin') components.add(s.component)
+      if (s.name?.startsWith(EXEC_PREFIX)) components.add(s.name.slice(EXEC_PREFIX.length).trim())
+    }
+    if (component) components.add(component)
+
     return {
       traceId, rootName: root?.name ?? traceId.slice(0, 8),
       component,
+      components,
       startMs, endMs: startMs + durationMs, durationMs,
       spanCount: ss.length,
       hasErrors: ss.some(s => s.status === 'ERROR'),
@@ -271,7 +288,7 @@ function Waterfall({
   const startMs = trace.startMs
   const durMs = trace.durationMs || 1
   const maxDepth = Math.max(...flat.map(n => n.depth), 0)
-  const components = Array.from(new Set(trace.spans.map(s => s.component).filter(Boolean)))
+  const components = Array.from(trace.components)
 
   return (
     <div className="text-xs flex-1 overflow-y-auto">
@@ -336,10 +353,17 @@ function Waterfall({
                     title={node.span.component ?? undefined}
                   />
               }
-              <span className={`truncate font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
-                {node.span.name}
-              </span>
-              {node.span.component && components.length > 1 && (
+              {node.span.name?.startsWith('execute_wasm_component ') ? (
+                <span className={`inline-flex items-center gap-1 truncate ${isError ? 'text-red-700' : ''}`} title={node.span.name}>
+                  <Cpu className="w-3 h-3 shrink-0" style={{ color }} />
+                  <span className="font-semibold truncate" style={{ color }}>{node.span.name.slice('execute_wasm_component '.length)}</span>
+                </span>
+              ) : (
+                <span className={`truncate font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
+                  {node.span.name}
+                </span>
+              )}
+              {node.span.component && components.length > 1 && !node.span.name?.startsWith('execute_wasm_component ') && (
                 <span className="ml-auto shrink-0 text-[10px] font-mono px-1 py-px rounded" style={{ color, opacity: 0.8 }}>
                   {node.span.component}
                 </span>
@@ -568,7 +592,7 @@ export default function TraceViewer() {
 
   const traceComponents = useMemo(() => {
     const set = new Set<string>()
-    for (const t of allGrouped) if (t.component) set.add(t.component)
+    for (const t of allGrouped) for (const c of t.components) set.add(c)
     return Array.from(set).sort()
   }, [allGrouped])
 
@@ -578,12 +602,13 @@ export default function TraceViewer() {
       all = all.filter(t => t.startMs >= timeFrom! && t.startMs <= timeTo!)
     }
     if (errorsOnly) all = all.filter(t => t.hasErrors)
-    if (compFilter !== 'all') all = all.filter(t => t.component === compFilter)
+    if (compFilter !== 'all') all = all.filter(t => t.components.has(compFilter))
     if (!filter) return all
     const q = filter.toLowerCase()
     return all.filter(t =>
       t.rootName.toLowerCase().includes(q) ||
       t.component.toLowerCase().includes(q) ||
+      Array.from(t.components).some(c => c.toLowerCase().includes(q)) ||
       t.traceId.includes(q)
     )
   }, [allGrouped, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo, compFilter])
@@ -735,13 +760,14 @@ export default function TraceViewer() {
                         <span className="font-semibold text-gray-900">{t.rootName}</span>
                         {t.component && (() => {
                           const color = colorMap.get(t.component) ?? '#9ca3af'
+                          const isDownstream = compFilter !== 'all' && t.component !== compFilter
                           return (
                             <span
                               className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono border"
                               style={{ borderColor: color, color, backgroundColor: `${color}18` }}
                             >
                               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                              {t.component}
+                              {isDownstream ? <>via {t.component}</> : t.component}
                             </span>
                           )
                         })()}
