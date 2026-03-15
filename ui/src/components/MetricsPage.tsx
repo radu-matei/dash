@@ -11,6 +11,7 @@ import {
   getTraces, getOtelMetrics,
   type Span, type MetricSeries,
 } from '../api/client'
+import ComponentTabs from './ComponentTabs'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,6 @@ const COMP_PALETTE = ['#7c3aed', '#0284c7', '#059669', '#d97706', '#db2777', '#0
 function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
   const entries = Object.values(series)
 
-  // Collect all component IDs seen across every metric series, sorted stably.
   const allComponents = useMemo(() => {
     const set = new Set<string>()
     for (const s of entries) {
@@ -140,36 +140,18 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
     return Array.from(set).sort()
   }, [entries])
 
-  // Stable color map: component name → palette color.
   const colorMap = useMemo(() => {
     const m = new Map<string, string>()
     allComponents.forEach((c, i) => m.set(c, COMP_PALETTE[i % COMP_PALETTE.length]))
     return m
   }, [allComponents])
 
-  // Global active-component set.  New components are auto-activated exactly
-  // once via seenRef; after that, deselections survive data refreshes.
-  const seenRef = useRef(new Set<string>())
-  const [activeComps, setActiveComps] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState('all')
 
-  useEffect(() => {
-    const fresh = allComponents.filter(c => !seenRef.current.has(c))
-    if (!fresh.length) return
-    fresh.forEach(c => seenRef.current.add(c))
-    setActiveComps(prev => {
-      const next = new Set(prev)
-      fresh.forEach(c => next.add(c))
-      return next
-    })
-  }, [allComponents])
-
-  const toggleComp = (c: string) =>
-    setActiveComps(prev => {
-      const next = new Set(prev)
-      if (next.has(c) && next.size > 1) next.delete(c)
-      else next.add(c)
-      return next
-    })
+  const activeComps = useMemo(() => {
+    if (activeTab === 'all') return new Set(allComponents)
+    return new Set([activeTab])
+  }, [activeTab, allComponents])
 
   if (!entries.length) {
     return (
@@ -183,32 +165,13 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
 
   return (
     <div className="space-y-3">
-      {/* Global component filter — one set of pills controls all charts */}
       {allComponents.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 px-1">
-          <span className="text-xs text-gray-400 font-medium shrink-0">Components:</span>
-          {allComponents.map(c => {
-            const color = colorMap.get(c)!
-            const active = activeComps.has(c)
-            return (
-              <button
-                key={c}
-                onClick={() => toggleComp(c)}
-                title={active ? `Hide ${c}` : `Show ${c}`}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono border transition-all"
-                style={{
-                  borderColor: color,
-                  color: active ? color : '#9ca3af',
-                  backgroundColor: active ? `${color}15` : 'transparent',
-                  opacity: active ? 1 : 0.45,
-                }}
-              >
-                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: active ? color : '#9ca3af' }} />
-                {c}
-              </button>
-            )
-          })}
-        </div>
+        <ComponentTabs
+          componentIds={allComponents}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          allTab={{ label: 'All components' }}
+        />
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

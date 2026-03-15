@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowDown, Braces, ChevronDown, ChevronRight, Clock, Cpu, Search, Settings2, Trash2, X } from 'lucide-react'
 import { useLogStore } from '../store/logContext'
@@ -431,7 +431,7 @@ type ActiveTab = 'spin' | string  // 'spin' or a component id
 export default function LogViewer() {
   const { rawLines, clear } = useLogStore()
   const { app } = useAppStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
 
   // URL-driven time-range filter (from TraceViewer deep-link)
@@ -440,12 +440,27 @@ export default function LogViewer() {
   const traceLabel = searchParams.get('label') ?? null
 
   // Tab + filter state
-  const [activeTab, setActiveTab]     = useState<ActiveTab>('spin')
+  const [activeTab, setActiveTabRaw]  = useState<ActiveTab>(searchParams.get('component') ?? 'spin')
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL')
   const [spinStream, setSpinStream]   = useState<StreamFilter>('all')
   const [subStream, setSubStream]     = useState<SubStream>('both')
-  const [search, setSearch]           = useState('')
+  const [search, setSearch]           = useState(searchParams.get('search') ?? '')
   const [autoScroll, setAutoScroll]   = useState(true)
+
+  const setActiveTab = useCallback((tab: ActiveTab) => {
+    setActiveTabRaw(tab)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (tab === 'spin') next.delete('component')
+      else next.set('component', tab)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
+  useEffect(() => {
+    const comp = searchParams.get('component')
+    if (comp && comp !== activeTab) setActiveTabRaw(comp)
+  }, [searchParams])
 
   const bottomRef    = useRef<HTMLDivElement>(null!)
   const containerRef = useRef<HTMLDivElement>(null!)

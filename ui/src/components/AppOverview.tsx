@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   CheckCircle2,
@@ -157,22 +158,6 @@ const TRIGGER_NODE_COLORS: Record<TriggerMeta['color'], {
 }
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
-
-function StatCard({ label, value, Icon, accent }: {
-  label: string; value: string | number; Icon: typeof Layers; accent?: boolean
-}) {
-  return (
-    <div className={`card p-4 flex items-center gap-4 ${accent ? 'border-spin-seagreen/40' : ''}`}>
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : 'bg-gray-100'}`}>
-        <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : 'text-gray-500'}`} />
-      </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900">{value}</p>
-        <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-      </div>
-    </div>
-  )
-}
 
 // ─── Detail pane ──────────────────────────────────────────────────────────────
 
@@ -2153,13 +2138,48 @@ function TriggerPane({
 
 export default function AppOverview() {
   const { app, refresh }    = useAppStore()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
   const [selected, setSelected] = useState<Selection | null>(null)
 
+  useEffect(() => {
+    if (!app) return
+    const compParam = searchParams.get('component')
+    const selectParam = searchParams.get('select')
+
+    let sel: Selection | null = null
+
+    if (compParam && app.components.some(c => c.id === compParam)) {
+      sel = { kind: 'component', componentId: compParam }
+    } else if (selectParam) {
+      const [kind, ...rest] = selectParam.split(':')
+      const value = rest.join(':')
+      if (kind === 'variable' && value) sel = { kind: 'variable', varName: value }
+      else if (kind === 'kv' && value) sel = { kind: 'resource', resKind: 'kv', resName: value }
+      else if (kind === 'sqlite' && value) sel = { kind: 'resource', resKind: 'sqlite', resName: value }
+      else if (kind === 'ai' && value) sel = { kind: 'ai-model', modelName: value }
+      else if (kind === 'host' && value) sel = { kind: 'outbound-host', hostPattern: value }
+    }
+
+    if (sel) {
+      setSelected(sel)
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, app, setSearchParams])
+
   const [showAddComp, setShowAddComp]       = useState(false)
   const [showAddBinding, setShowAddBinding] = useState(false)
   const [showAddVar, setShowAddVar]         = useState(false)
+
+  useEffect(() => {
+    const dialog = searchParams.get('dialog')
+    if (!dialog) return
+    if (dialog === 'add-component') setShowAddComp(true)
+    else if (dialog === 'add-variable') setShowAddVar(true)
+    else if (dialog === 'add-service') setShowAddBinding(true)
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
   const [showEditToml, setShowEditToml]     = useState(false)
   const [restarting, setRestarting]           = useState(false)
   const [restartMenuOpen, setRestartMenuOpen] = useState(false)
@@ -2350,14 +2370,6 @@ export default function AppOverview() {
                 <AlertCircle className="w-4 h-4 shrink-0" />{error}
               </div>
             )}
-
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard label="Components" value={components.length} Icon={Layers} accent />
-              <StatCard label="Triggers"   value={triggers.length}   Icon={Zap} />
-              <StatCard label="Variables"  value={app?.varCount ?? 0} Icon={Key} />
-              <StatCard label="Status"     value={app?.status ?? '—'} Icon={CheckCircle2} />
-            </div>
 
             <div className="card p-6">
               {components.length === 0 ? (

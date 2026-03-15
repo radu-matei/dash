@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle2, GitMerge, Layers, Loader2, Plus, X } from 'lucide-react'
 import { addComponentVariable, addVariable } from '../api/client'
 import { useAppStore } from '../store/appContext'
@@ -13,6 +13,12 @@ interface Props {
 export default function AddVariableDialog({ onClose, onSuccess, initialMode = 'new' }: Props) {
   const { app }    = useAppStore()
   const components = app?.components ?? []
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
 
   const [mode, setMode] = useState<'new' | 'wire'>(initialMode)
 

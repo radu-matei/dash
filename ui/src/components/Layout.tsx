@@ -8,9 +8,11 @@ import {
   FlaskConical,
   LayoutDashboard,
   ScrollText,
+  Search,
   TrendingUp,
 } from 'lucide-react'
 import { useAppStore } from '../store/appContext'
+import { useCommandPalette } from './CommandPalette'
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -72,8 +74,21 @@ const REPO = 'https://github.com/radu-matei/dash'
 
 export default function Layout() {
   const { app } = useAppStore()
+  const { open: openPalette } = useCommandPalette()
   const status = app?.status ?? 'starting'
   const [collapsed, toggle] = useCollapsed()
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'b' && !e.shiftKey) {
+        e.preventDefault()
+        toggle()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [toggle])
 
   const [sha, setSha] = useState<string | null>(null)
   useEffect(() => {
@@ -122,6 +137,25 @@ export default function Layout() {
             </>
           )}
         </div>
+
+        {/* Search / command palette trigger */}
+        <button
+          onClick={openPalette}
+          className={`flex items-center rounded-lg text-gray-400 hover:text-gray-200 hover:bg-white/[0.08] transition-colors shrink-0 ${
+            collapsed ? 'justify-center mx-1.5 mt-2 px-0 py-2' : 'gap-2.5 mx-3 mt-2 px-3 py-2'
+          }`}
+          title={`Search (${isMac ? '⌘' : 'Ctrl+'}K)`}
+        >
+          <Search className="w-3.5 h-3.5 shrink-0" />
+          {!collapsed && (
+            <>
+              <span className="text-xs flex-1 text-left">Search…</span>
+              <kbd className="text-[10px] font-mono text-gray-500 bg-white/[0.08] px-1.5 py-0.5 rounded">
+                {isMac ? '⌘K' : '⌃K'}
+              </kbd>
+            </>
+          )}
+        </button>
 
         {/* Open app link — only shown when --listen was provided */}
         {app?.listenAddr && (
@@ -180,14 +214,17 @@ export default function Layout() {
           className={`flex items-center border-t border-white/[0.08] shrink-0 text-gray-400 hover:text-white hover:bg-white/[0.06] transition-colors ${
             collapsed ? 'justify-center py-3' : 'gap-2 px-4 py-3'
           }`}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={`${collapsed ? 'Expand' : 'Collapse'} sidebar (${isMac ? '⌘' : 'Ctrl+'}B)`}
         >
           {collapsed
             ? <ChevronsRight className="w-4 h-4" />
             : (
               <>
                 <ChevronsLeft className="w-4 h-4 shrink-0" />
-                <span className="text-[11px]">Collapse</span>
+                <span className="text-[11px] flex-1 text-left">Collapse</span>
+                <kbd className="text-[10px] font-mono text-gray-500 bg-white/[0.08] px-1.5 py-0.5 rounded">
+                  {isMac ? '⌘B' : '⌃B'}
+                </kbd>
               </>
             )
           }

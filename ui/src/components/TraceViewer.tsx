@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertCircle, ChevronDown, ChevronRight,
   ExternalLink, FlaskConical, RefreshCw, Search, X,
 } from 'lucide-react'
 import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
+import ComponentTabs from './ComponentTabs'
 import { useLogStore } from '../store/logContext'
 import { parseLogLine, type ParsedLine } from './LogViewer'
 
@@ -545,12 +546,39 @@ export default function TraceViewer() {
   const routeMap = useMemo(() => buildRouteMap(appInfo), [appInfo])
   const colorMap = useMemo(() => buildColorMap(allSpans), [allSpans])
 
+  const [compFilter, setCompFilterRaw] = useState(() => searchParams.get('component') ?? 'all')
+
+  const setCompFilter = useCallback((tab: string) => {
+    setCompFilterRaw(tab)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (tab === 'all') next.delete('component')
+      else next.set('component', tab)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
+  useEffect(() => {
+    const comp = searchParams.get('component')
+    if (comp && comp !== compFilter) setCompFilterRaw(comp)
+    else if (!comp && compFilter !== 'all') setCompFilterRaw('all')
+  }, [searchParams])
+
+  const allGrouped = useMemo(() => groupTraces(allSpans, routeMap), [allSpans, routeMap])
+
+  const traceComponents = useMemo(() => {
+    const set = new Set<string>()
+    for (const t of allGrouped) if (t.component) set.add(t.component)
+    return Array.from(set).sort()
+  }, [allGrouped])
+
   const traces = useMemo(() => {
-    let all = groupTraces(allSpans, routeMap)
+    let all = allGrouped
     if (hasTimeFilter) {
       all = all.filter(t => t.startMs >= timeFrom! && t.startMs <= timeTo!)
     }
     if (errorsOnly) all = all.filter(t => t.hasErrors)
+    if (compFilter !== 'all') all = all.filter(t => t.component === compFilter)
     if (!filter) return all
     const q = filter.toLowerCase()
     return all.filter(t =>
@@ -558,7 +586,7 @@ export default function TraceViewer() {
       t.component.toLowerCase().includes(q) ||
       t.traceId.includes(q)
     )
-  }, [allSpans, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo])
+  }, [allGrouped, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo, compFilter])
 
   // Auto-select the first trace when arriving via a time-window deep link.
   const autoSelectedRef = useRef(false)
@@ -646,6 +674,16 @@ export default function TraceViewer() {
             <X className="w-3 h-3" /> Show all
           </button>
         </div>
+      )}
+
+      {traceComponents.length > 0 && (
+        <ComponentTabs
+          componentIds={traceComponents}
+          activeTab={compFilter}
+          onTabChange={setCompFilter}
+          allTab={{ label: 'All components' }}
+          trailing={<>{traces.length} trace{traces.length !== 1 ? 's' : ''}</>}
+        />
       )}
 
       {traces.length === 0 ? (
