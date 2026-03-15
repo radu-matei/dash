@@ -3,6 +3,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import {
   Activity,
   ExternalLink,
+  FlaskConical,
   LayoutDashboard,
   ScrollText,
   TrendingUp,
@@ -35,6 +36,12 @@ const NAV_SECTIONS = [
       { to: '/logs', label: 'Logs', Icon: ScrollText },
       { to: '/traces', label: 'Traces', Icon: Activity },
       { to: '/metrics', label: 'Metrics', Icon: TrendingUp },
+    ],
+  },
+  {
+    label: 'Testing',
+    items: [
+      { to: '/tests', label: 'HTTP Tests', Icon: FlaskConical },
     ],
   },
 ]

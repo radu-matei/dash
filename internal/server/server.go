@@ -60,6 +60,10 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/templates", templatesHandler())
 	mux.HandleFunc("/api/version", versionHandler(opts.CommitSHA))
 
+	// --- Hurl HTTP testing routes ---
+	mux.HandleFunc("/api/hurl-tests", hurlTestsHandler(opts.Dir))
+	mux.HandleFunc("/api/hurl-run", hurlRunHandler(opts.Dir, opts.Runner, opts.Cfg))
+
 	// --- Mutation routes (require --allow-edits) ---
 	mutationGuard := func(h http.HandlerFunc) http.HandlerFunc {
 		if opts.AllowMutations {
@@ -69,6 +73,8 @@ func New(opts Options) (*http.ServeMux, error) {
 			jsonErr(w, http.StatusForbidden, "edits are disabled; restart the dashboard with --allow-edits to enable them")
 		}
 	}
+	mux.HandleFunc("/api/hurl-file", hurlFileHandler(opts.Dir, opts.AllowMutations))
+	mux.HandleFunc("/api/hurl-delete", mutationGuard(hurlDeleteHandler(opts.Dir)))
 	mux.HandleFunc("/api/spin-toml", mutationGuard(spinTomlHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/add-component", mutationGuard(addComponentHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/add-variable", mutationGuard(addVariableHandler(&opts, cfgMu)))
