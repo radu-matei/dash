@@ -117,7 +117,7 @@ export default function Layout() {
             <div className="min-w-0">
               <div className="text-sm font-bold tracking-wide text-white leading-none">SPIN</div>
               <p className="text-[11px] text-gray-300 truncate mt-0.5">
-                {app?.name ?? 'dashboard'} · local
+                {app?.name ?? 'dashboard'}
               </p>
             </div>
           )}
@@ -212,51 +212,45 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Collapse toggle */}
-        <button
-          onClick={toggle}
-          className={`flex items-center border-t border-white/[0.08] shrink-0 text-gray-400 hover:text-white hover:bg-white/[0.06] transition-colors ${
-            collapsed ? 'justify-center py-3' : 'gap-2 px-4 py-3'
-          }`}
-          title={`${collapsed ? 'Expand' : 'Collapse'} sidebar (${isMac ? '⌘' : 'Ctrl+'}B)`}
-        >
-          {collapsed
-            ? <ChevronsRight className="w-4 h-4" />
-            : (
-              <>
-                <ChevronsLeft className="w-4 h-4 shrink-0" />
-                <span className="text-[11px] flex-1 text-left">Collapse</span>
-                <kbd className="text-[10px] font-mono text-gray-500 bg-white/[0.08] px-1.5 py-0.5 rounded">
-                  {isMac ? '⌘B' : '⌃B'}
-                </kbd>
-              </>
-            )
-          }
-        </button>
-
-        {/* Footer */}
-        {!collapsed && (
-          <div className="px-4 py-3 border-t border-white/[0.08] shrink-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <img src="/spin-favicon.png" className="w-4 h-4 opacity-40 shrink-0 invert" alt="" />
-              <span className="text-[11px] text-gray-400 shrink-0">spin dashboard</span>
-              {sha && (
-                <>
-                  <span className="text-gray-500 text-[11px]">·</span>
-                  <a
-                    href={`${REPO}/commit/${sha.replace(/-dev$/, '')}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] text-gray-400 hover:text-gray-200 font-mono truncate transition-colors"
-                    title={`Commit ${sha}`}
-                  >
-                    {sha}
-                  </a>
-                </>
-              )}
+        {/* Footer: version + collapse toggle */}
+        <div className={`border-t border-white/[0.08] shrink-0 ${collapsed ? '' : 'px-4 py-2'}`}>
+          {!collapsed && sha && (
+            <div className="flex items-center gap-1.5 min-w-0 mb-1.5">
+              <img src="/spin-favicon.png" className="w-3.5 h-3.5 opacity-40 shrink-0 invert" alt="" />
+              <span className="text-[10px] text-gray-500 shrink-0">spin dashboard</span>
+              <span className="text-gray-600 text-[10px]">·</span>
+              <a
+                href={`${REPO}/commit/${sha.replace(/-dev$/, '')}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-gray-500 hover:text-gray-300 font-mono truncate transition-colors"
+                title={`Commit ${sha}`}
+              >
+                {sha}
+              </a>
             </div>
-          </div>
-        )}
+          )}
+          <button
+            onClick={toggle}
+            className={`flex items-center w-full text-gray-400 hover:text-white hover:bg-white/[0.06] rounded-lg transition-colors ${
+              collapsed ? 'justify-center py-3' : 'gap-2 px-2 py-1.5'
+            }`}
+            title={`${collapsed ? 'Expand' : 'Collapse'} sidebar (${isMac ? '⌘' : 'Ctrl+'}B)`}
+          >
+            {collapsed
+              ? <ChevronsRight className="w-4 h-4" />
+              : (
+                <>
+                  <ChevronsLeft className="w-4 h-4 shrink-0" />
+                  <span className="text-[11px] flex-1 text-left">Collapse</span>
+                  <kbd className="text-[10px] font-mono text-gray-500 bg-white/[0.08] px-1.5 py-0.5 rounded">
+                    {isMac ? '⌘B' : '⌃B'}
+                  </kbd>
+                </>
+              )
+            }
+          </button>
+        </div>
       </aside>
 
       {/* ── Main content ─────────────────────────────────────── */}
