@@ -242,3 +242,42 @@ export const restartSpin = () => post<MutationResult>('/api/restart', {})
 /** Run `spin build` (streaming to the Logs tab) then restart the Spin process. */
 export const buildAndRestart = () => post<MutationResult>('/api/build-restart', {})
 
+// ── Hurl HTTP testing ────────────────────────────────────────────────────────
+
+export interface HurlTestFile {
+  name: string
+  path: string
+  dir: string
+  content?: string
+}
+
+export interface HurlTestListResponse {
+  files: HurlTestFile[]
+  hurlInstalled: boolean
+  defaultDir: string
+}
+
+export interface HurlRunResult {
+  success: boolean
+  output: string
+  durationMs: number
+  startTimeMs: number
+  endTimeMs: number
+  file: string
+  exitCode: number
+}
+
+export const getHurlTests = () => get<HurlTestListResponse>('/api/hurl-tests')
+
+export const getHurlFile = (path: string) =>
+  get<HurlTestFile>(`/api/hurl-file?path=${encodeURIComponent(path)}`)
+
+export const saveHurlFile = (path: string, content: string) =>
+  post<MutationResult & { path: string }>('/api/hurl-file', { path, content })
+
+export const runHurlTest = (path: string, variables?: Record<string, string>) =>
+  post<HurlRunResult>('/api/hurl-run', { path, variables })
+
+export const deleteHurlFile = (path: string) =>
+  post<MutationResult>('/api/hurl-delete', { path })
+

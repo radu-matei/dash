@@ -1,16 +1,19 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppProvider } from './store/appContext'
 import { LogProvider } from './store/logContext'
+import { TestRunProvider } from './store/testRunContext'
 import Layout from './components/Layout'
 import AppOverview from './components/AppOverview'
 import LogViewer from './components/LogViewer'
 import TraceViewer from './components/TraceViewer'
 import MetricsPage from './components/MetricsPage'
+import HttpTesting from './components/HttpTesting'
 
 export default function App() {
   return (
     <AppProvider>
     <LogProvider>
+    <TestRunProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
@@ -19,9 +22,11 @@ export default function App() {
             <Route path="logs" element={<LogViewer />} />
             <Route path="traces" element={<TraceViewer />} />
             <Route path="metrics" element={<MetricsPage />} />
+            <Route path="tests" element={<HttpTesting />} />
           </Route>
         </Routes>
       </BrowserRouter>
+    </TestRunProvider>
     </LogProvider>
     </AppProvider>
   )

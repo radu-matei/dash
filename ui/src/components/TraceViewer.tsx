@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertCircle, ChevronDown, ChevronRight,
-  ExternalLink, RefreshCw, Search,
+  ExternalLink, FlaskConical, RefreshCw, Search, X,
 } from 'lucide-react'
 import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
 import { useLogStore } from '../store/logContext'
@@ -460,13 +460,29 @@ function DurationBar({ durationMs, maxDurationMs }: { durationMs: number; maxDur
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function TraceViewer() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [allSpans, setAllSpans]   = useState<Span[]>([])
   const [appInfo, setAppInfo]     = useState<AppInfo | null>(null)
   const [error, setError]         = useState<string | null>(null)
   const [selected, setSelected]   = useState<string | null>(null)
   const [filter, setFilter]       = useState('')
   const [errorsOnly, setErrorsOnly] = useState(() => searchParams.get('errors') === '1')
+
+  // Time-window filter from URL (used by HTTP Tests "View Traces" links).
+  const timeFrom  = searchParams.get('from') ? Number(searchParams.get('from')) : null
+  const timeTo    = searchParams.get('to')   ? Number(searchParams.get('to'))   : null
+  const timeLabel = searchParams.get('label') ?? null
+  const hasTimeFilter = timeFrom !== null && timeTo !== null
+
+  const clearTimeFilter = () => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.delete('from')
+      next.delete('to')
+      next.delete('label')
+      return next
+    }, { replace: true })
+  }
   const [activeTab, setActiveTab] = useState<'waterfall' | 'logs'>('waterfall')
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const [listHeight, setListHeight] = useState(192) // px – resizable trace-list height
@@ -531,6 +547,9 @@ export default function TraceViewer() {
 
   const traces = useMemo(() => {
     let all = groupTraces(allSpans, routeMap)
+    if (hasTimeFilter) {
+      all = all.filter(t => t.startMs >= timeFrom! && t.startMs <= timeTo!)
+    }
     if (errorsOnly) all = all.filter(t => t.hasErrors)
     if (!filter) return all
     const q = filter.toLowerCase()
@@ -539,7 +558,16 @@ export default function TraceViewer() {
       t.component.toLowerCase().includes(q) ||
       t.traceId.includes(q)
     )
-  }, [allSpans, filter, errorsOnly])
+  }, [allSpans, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo])
+
+  // Auto-select the first trace when arriving via a time-window deep link.
+  const autoSelectedRef = useRef(false)
+  useEffect(() => {
+    if (hasTimeFilter && traces.length > 0 && !autoSelectedRef.current) {
+      autoSelectedRef.current = true
+      setSelected(traces[0].traceId)
+    }
+  }, [hasTimeFilter, traces])
 
   const selectedTrace = useMemo(() => traces.find(t => t.traceId === selected) ?? null, [traces, selected])
   const maxDuration   = useMemo(() => Math.max(...traces.map(t => t.durationMs), 1), [traces])
@@ -596,6 +624,27 @@ export default function TraceViewer() {
       {error && (
         <div className="mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2 shrink-0">
           <AlertCircle className="w-4 h-4 shrink-0" />{error}
+        </div>
+      )}
+
+      {hasTimeFilter && (
+        <div className="mx-4 mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800 flex items-center gap-2 shrink-0">
+          <FlaskConical className="w-4 h-4 shrink-0 text-blue-500" />
+          <span className="flex-1">
+            Showing traces from{' '}
+            {timeLabel ? <strong>{timeLabel}</strong> : 'test run'}
+            {' '}({fmtTime(timeFrom!)} — {fmtTime(timeTo!)})
+            {traces.length > 0
+              ? <> · <strong>{traces.length}</strong> trace{traces.length !== 1 ? 's' : ''}</>
+              : ' · waiting for traces…'
+            }
+          </span>
+          <button
+            onClick={clearTimeFilter}
+            className="btn-secondary text-xs h-6 px-2 shrink-0"
+          >
+            <X className="w-3 h-3" /> Show all
+          </button>
         </div>
       )}
 
