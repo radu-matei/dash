@@ -414,6 +414,10 @@ func buildAndRestartHandler(opts *Options) http.HandlerFunc {
 func runBuildAndRestart(opts *Options, label string) {
 	opts.Hub.Publish("system", label)
 
+	// Stop the running Spin process before building so the dashboard status
+	// visibly transitions to non-running during the build.
+	opts.Runner.Stop()
+
 	buildCmd := exec.Command(opts.SpinBin, "build")
 	buildCmd.Dir = opts.Dir
 	buildCmd.Env = append(os.Environ(), "NO_COLOR=1")

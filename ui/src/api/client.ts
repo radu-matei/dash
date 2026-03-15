@@ -22,7 +22,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
-export type SpinStatus = 'starting' | 'running' | 'stopped' | 'error'
+export type SpinStatus = 'starting' | 'running' | 'stopped' | 'error' | 'building' | 'restarting'
 
 export interface AppStatus {
   status: SpinStatus

@@ -92,16 +92,18 @@ function LangIcon({ comp, size = 16 }: { comp: ComponentInfo; size?: number }) {
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
 function StatusChip({ status, error }: { status: string; error: string }) {
-  const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string }> = {
-    running:  { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'  },
-    starting: { cls: 'badge-yellow', Icon: Clock,        label: 'Starting' },
-    stopped:  { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'  },
-    error:    { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'    },
+  const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string; spin?: boolean }> = {
+    running:    { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'      },
+    starting:   { cls: 'badge-yellow', Icon: Clock,        label: 'Starting'     },
+    building:   { cls: 'badge-blue',   Icon: Hammer,       label: 'Building…', spin: true },
+    restarting: { cls: 'badge-yellow', Icon: Loader2,      label: 'Restarting…', spin: true },
+    stopped:    { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'      },
+    error:      { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'        },
   }
-  const { cls, Icon, label } = cfg[status] ?? cfg.stopped
+  const { cls, Icon, label, spin: spinning } = cfg[status] ?? cfg.stopped
   return (
     <span className={cls + ' badge text-xs'} title={error || undefined}>
-      <Icon className="w-3 h-3" />
+      <Icon className={`w-3 h-3${spinning ? ' animate-spin' : ''}`} />
       {label}
     </span>
   )
@@ -2137,7 +2139,7 @@ function TriggerPane({
 
 
 export default function AppOverview() {
-  const { app, refresh, notifyRestart } = useAppStore()
+  const { app, refresh, notifyRestart, notifyBuilding } = useAppStore()
   const [searchParams, setSearchParams] = useSearchParams()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
@@ -2349,7 +2351,7 @@ export default function AppOverview() {
                     setRestartMenuOpen(false)
                     setRestarting(true)
                     try { await buildAndRestart() } catch { /* ignore */ }
-                    notifyRestart()
+                    notifyBuilding()
                     setTimeout(() => setRestarting(false), 2000)
                   }}
                 >

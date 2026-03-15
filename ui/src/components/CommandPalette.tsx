@@ -85,7 +85,7 @@ function CommandPaletteInner({
   onOpen: () => void
 }) {
   const navigate = useNavigate()
-  const { app, notifyRestart } = useAppStore()
+  const { app, notifyRestart, notifyBuilding } = useAppStore()
   const { clear: clearLogs } = useLogStore()
 
   const [query, setQuery] = useState('')
@@ -118,13 +118,13 @@ function CommandPaletteInner({
         }
         if (e.key === 'b' || e.key === 'B') {
           e.preventDefault()
-          buildAndRestart().catch(() => {}); notifyRestart()
+          buildAndRestart().catch(() => {}); notifyBuilding()
         }
       }
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [isOpen, onClose, onOpen, notifyRestart])
+  }, [isOpen, onClose, onOpen, notifyRestart, notifyBuilding])
 
   // ── Build result items ─────────────────────────────────────────────────────
 
@@ -154,7 +154,7 @@ function CommandPaletteInner({
     // ── Actions ────────────────────────────────────────────────────────────
     const actions: PaletteItem[] = [
       { id: 'a-restart', category: 'action', label: 'Restart Spin', description: 'Restart the Spin process', Icon: RefreshCw, shortcut: `${modKey}⇧R`, onSelect: () => exec(() => { restartSpin().catch(() => {}); notifyRestart() }) },
-      { id: 'a-build', category: 'action', label: 'Build & Restart', description: 'Run spin build, then restart', Icon: Hammer, shortcut: `${modKey}⇧B`, onSelect: () => exec(() => { buildAndRestart().catch(() => {}); notifyRestart() }) },
+      { id: 'a-build', category: 'action', label: 'Build & Restart', description: 'Run spin build, then restart', Icon: Hammer, shortcut: `${modKey}⇧B`, onSelect: () => exec(() => { buildAndRestart().catch(() => {}); notifyBuilding() }) },
       { id: 'a-clear-logs', category: 'action', label: 'Clear Logs', description: 'Clear all log output', Icon: Trash2, onSelect: () => exec(clearLogs) },
       { id: 'a-error-traces', category: 'action', label: 'Show Error Traces', description: 'View traces with errors', Icon: Zap, onSelect: () => exec(() => navigate('/traces?errors=1')) },
     ]

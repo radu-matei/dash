@@ -17,17 +17,21 @@ import { useCommandPalette } from './CommandPalette'
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_COLORS: Record<string, string> = {
-  starting: 'bg-amber-400 animate-pulse',
-  running: 'bg-spin-seagreen',
-  stopped: 'bg-gray-500',
-  error: 'bg-red-400',
+  starting:   'bg-amber-400 animate-pulse',
+  building:   'bg-blue-400 animate-pulse',
+  restarting: 'bg-amber-400 animate-pulse',
+  running:    'bg-spin-seagreen',
+  stopped:    'bg-gray-500',
+  error:      'bg-red-400',
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  starting: 'Starting',
-  running: 'Running',
-  stopped: 'Stopped',
-  error: 'Error',
+  starting:   'Starting',
+  building:   'Building…',
+  restarting: 'Restarting…',
+  running:    'Running',
+  stopped:    'Stopped',
+  error:      'Error',
 }
 
 // ─── Navigation config ────────────────────────────────────────────────────────

@@ -20,15 +20,20 @@ interface AppContextValue {
   refresh: () => void
   /** Signal that Spin is restarting — clears listenAddr and fast-polls until it's back. */
   notifyRestart: () => void
+  /** Signal that a build is running before restart. */
+  notifyBuilding: () => void
 }
 
-const AppCtx = createContext<AppContextValue>({ app: null, refresh: () => {}, notifyRestart: () => {} })
+const AppCtx = createContext<AppContextValue>({ app: null, refresh: () => {}, notifyRestart: () => {}, notifyBuilding: () => {} })
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [app, setApp] = useState<AppInfo | null>(null)
   const [tick, setTick] = useState(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const restartingRef = useRef(false)
+  // When non-null, we override the displayed status until the backend
+  // confirms 'running' again (with a generous timeout as safety net).
+  const overrideRef = useRef<{ status: 'restarting' | 'building'; until: number } | null>(null)
+  const prevBackendStatus = useRef<string>('running')
 
   useEffect(() => {
     let active = true
@@ -38,17 +43,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       getApp(ctrl.signal)
         .then(info => {
           if (!active) return
-          if (restartingRef.current) {
-            if (info.listenAddr) {
-              restartingRef.current = false
+
+          const ov = overrideRef.current
+
+          if (ov) {
+            const timedOut = Date.now() > ov.until
+            const backendRecovered = info.status === 'running' && prevBackendStatus.current !== 'running'
+            prevBackendStatus.current = info.status
+
+            if (timedOut || backendRecovered) {
+              overrideRef.current = null
               setApp(info)
             } else {
-              setApp(prev => prev ? { ...prev, ...info, listenAddr: undefined, status: 'starting' } : info)
+              // Backend stopped/errored during build → switch label to "restarting"
+              const displayStatus = ov.status === 'building' && info.status !== 'running'
+                ? 'restarting' as const
+                : ov.status
+              setApp(prev => prev ? { ...prev, ...info, status: displayStatus } : info)
             }
           } else {
+            prevBackendStatus.current = info.status
             setApp(info)
           }
-          const settled = !restartingRef.current && info.status === 'running' && !!info.listenAddr
+
+          const settled = !overrideRef.current && info.status === 'running' && !!info.listenAddr
           timerRef.current = setTimeout(fetchNow, settled ? POLL_SLOW : POLL_FAST)
         })
         .catch(() => {
@@ -72,13 +90,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const notifyRestart = useCallback(() => {
-    restartingRef.current = true
-    setApp(prev => prev ? { ...prev, listenAddr: undefined, status: 'starting' } : prev)
+    prevBackendStatus.current = 'restarting'
+    overrideRef.current = { status: 'restarting', until: Date.now() + 30_000 }
+    setApp(prev => prev ? { ...prev, status: 'restarting' } : prev)
     if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(() => setTick(t => t + 1), 500)
+    setTick(t => t + 1)
   }, [])
 
-  return <AppCtx.Provider value={{ app, refresh, notifyRestart }}>{children}</AppCtx.Provider>
+  const notifyBuilding = useCallback(() => {
+    prevBackendStatus.current = 'building'
+    overrideRef.current = { status: 'building', until: Date.now() + 120_000 }
+    setApp(prev => prev ? { ...prev, status: 'building' } : prev)
+    if (timerRef.current) clearTimeout(timerRef.current)
+    setTick(t => t + 1)
+  }, [])
+
+  return <AppCtx.Provider value={{ app, refresh, notifyRestart, notifyBuilding }}>{children}</AppCtx.Provider>
 }
 
 export const useAppStore = () => useContext(AppCtx)
