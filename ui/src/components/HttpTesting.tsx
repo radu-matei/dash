@@ -554,7 +554,7 @@ function RequestCard({
               if (!showHeaders && entry.headers.length === 0) onChange({ headers: [{ key: '', value: '' }] })
             }}
             className={`text-xs px-2 py-1 rounded transition-colors ${
-              showHeaders ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              showHeaders ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
             Headers{entry.headers.length > 0 && ` (${entry.headers.length})`}
@@ -563,7 +563,7 @@ function RequestCard({
             <button
               onClick={() => setShowBody(v => !v)}
               className={`text-xs px-2 py-1 rounded transition-colors ${
-                showBody ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                showBody ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
               }`}
             >
               Body
@@ -576,7 +576,7 @@ function RequestCard({
                 onChange({ assertions: [{ type: 'jsonpath', selector: '', predicate: '==', value: '' }] })
             }}
             className={`text-xs px-2 py-1 rounded transition-colors ${
-              showAsserts ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              showAsserts ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
             }`}
           >
             Assertions{entry.assertions.length > 0 && ` (${entry.assertions.length})`}
@@ -585,7 +585,7 @@ function RequestCard({
 
         {/* Headers */}
         {showHeaders && (
-          <div className="space-y-1.5 pl-1 border-l-2 border-blue-200 ml-1">
+          <div className="space-y-1.5 pl-1 border-l-2 border-spin-seagreen/30 ml-1">
             {entry.headers.map((h, i) => (
               <HeaderRow
                 key={i}
@@ -605,7 +605,7 @@ function RequestCard({
 
         {/* Body */}
         {needsBody && showBody && (
-          <div className="pl-1 border-l-2 border-blue-200 ml-1">
+          <div className="pl-1 border-l-2 border-spin-seagreen/30 ml-1">
             <textarea
               className="input-mono text-xs w-full h-24 resize-y"
               placeholder={'{\n  "key": "value"\n}'}
@@ -642,7 +642,7 @@ function RequestCard({
 
         {/* Assertions */}
         {showAsserts && (
-          <div className="space-y-1.5 pl-1 border-l-2 border-blue-200 ml-1">
+          <div className="space-y-1.5 pl-1 border-l-2 border-spin-seagreen/30 ml-1">
             {entry.assertions.map((a, i) => (
               <AssertionRow
                 key={i}
@@ -754,7 +754,7 @@ function NewTestBuilder({
 
           <button
             onClick={addEntry}
-            className="w-full py-2.5 border-2 border-dashed border-gray-200 rounded-xl text-xs text-gray-400 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/30 transition-colors flex items-center justify-center gap-1.5"
+            className="w-full py-2.5 border-2 border-dashed border-gray-200 rounded-xl text-xs text-gray-400 hover:border-spin-seagreen/40 hover:text-spin-midgreen hover:bg-spin-seagreen/5 transition-colors flex items-center justify-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" /> Chain another request
           </button>
@@ -1296,7 +1296,7 @@ export default function HttpTesting() {
                         onClick={() => selectFile(f.path)}
                         className={`flex items-center gap-2 w-full text-left pl-8 pr-3 py-1.5 text-xs transition-colors ${
                           f.path === selectedPath
-                            ? 'bg-blue-50 text-blue-700 font-medium'
+                            ? 'bg-spin-seagreen/10 text-spin-oxfordblue font-medium'
                             : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                         }`}
                       >

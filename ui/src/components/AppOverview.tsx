@@ -242,7 +242,7 @@ function InfoRow({
           target="_blank"
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
-          className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+          className="text-gray-300 hover:text-spin-colablue transition-colors shrink-0"
           title={`Open ${href}`}
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -2119,7 +2119,7 @@ function TriggerPane({
                     href={routeHref}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+                    className="text-gray-300 hover:text-spin-colablue transition-colors shrink-0"
                     title={`Open ${routeHref}`}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />

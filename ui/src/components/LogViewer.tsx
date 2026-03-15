@@ -665,7 +665,7 @@ export default function LogViewer() {
               <button
                 key={s.value}
                 onClick={() => setSpinStream(s.value)}
-                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-gray-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
               >{s.label}</button>
             ))}
           </div>
@@ -679,7 +679,7 @@ export default function LogViewer() {
                 key={s}
                 onClick={() => setSubStream(s)}
                 className={`px-2.5 py-1 transition-colors ${subStream === s
-                  ? s === 'stderr' ? 'bg-rose-600 text-white' : 'bg-gray-700 text-white'
+                  ? s === 'stderr' ? 'bg-rose-600 text-white' : 'bg-spin-oxfordblue text-white'
                   : 'bg-white text-gray-600 hover:bg-gray-50'}`}
               >{s}</button>
             ))}

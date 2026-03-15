@@ -61,7 +61,7 @@
   }
 
   .btn-blue {
-    @apply btn bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md;
+    @apply btn bg-spin-colablue hover:bg-spin-colablue/90 text-white shadow-sm hover:shadow-md;
   }
 
   /* ── Inputs ─────────────────────────────────────── */
@@ -121,18 +121,18 @@
     @apply text-base font-semibold text-gray-900;
   }
 
-  /* ── Nav items ──────────────────────────────────── */
+  /* ── Nav items (dark sidebar context) ────────────── */
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
            transition-all duration-150 cursor-pointer;
   }
 
   .nav-item-active {
-    @apply nav-item bg-blue-50 text-blue-700;
+    @apply nav-item bg-spin-seagreen/[0.18] text-spin-seagreen;
   }
 
   .nav-item-inactive {
-    @apply nav-item text-gray-600 hover:bg-gray-100 hover:text-gray-900;
+    @apply nav-item text-gray-300 hover:bg-white/[0.08] hover:text-white;
   }
 
   /* ── Status dot ─────────────────────────────────── */
@@ -140,9 +140,9 @@
     @apply inline-block w-2 h-2 rounded-full;
   }
 
-  /* ── Section label ──────────────────────────────── */
+  /* ── Section label (dark sidebar context) ────────── */
   .section-label {
-    @apply text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-1;
+    @apply text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-3 mb-1;
   }
 
   /* ── Skeleton ───────────────────────────────────── */

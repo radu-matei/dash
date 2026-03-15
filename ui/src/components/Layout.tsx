@@ -14,9 +14,9 @@ import { useAppStore } from '../store/appContext'
 
 const STATUS_COLORS: Record<string, string> = {
   starting: 'bg-amber-400 animate-pulse',
-  running: 'bg-green-500',
-  stopped: 'bg-gray-400',
-  error: 'bg-red-500',
+  running: 'bg-spin-seagreen',
+  stopped: 'bg-gray-500',
+  error: 'bg-red-400',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -66,26 +66,26 @@ export default function Layout() {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50">
       {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="flex flex-col w-56 shrink-0 bg-white border-r border-gray-200">
+      <aside className="flex flex-col w-56 shrink-0 bg-spin-oxfordblue">
         {/* Logo + app name */}
-        <div className="flex items-center gap-3 px-4 h-16 border-b border-gray-200 shrink-0">
-          <img src="/spin-favicon.png" className="w-7 h-7 rounded shrink-0" alt="Spin" />
+        <div className="flex items-center gap-3 px-4 h-14 border-b border-white/[0.10] shrink-0">
+          <img src="/spin-favicon.png" className="w-7 h-7 rounded shrink-0 invert" alt="Spin" />
           <div className="min-w-0">
-            <div className="text-sm font-bold tracking-wide text-spin-oxfordblue leading-none">SPIN</div>
-            <p className="text-xs text-gray-400 truncate mt-0.5">
+            <div className="text-sm font-bold tracking-wide text-white leading-none">SPIN</div>
+            <p className="text-[11px] text-gray-300 truncate mt-0.5">
               {app?.name ?? 'dashboard'} · local
             </p>
           </div>
         </div>
 
         {/* Status banner */}
-        <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-gray-100 bg-gray-50 shrink-0">
+        <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-white/[0.08] bg-white/[0.03] shrink-0">
           <span className={`status-dot ${STATUS_COLORS[status]}`} />
-          <span className="text-xs font-medium text-gray-600">
+          <span className="text-xs font-medium text-gray-200">
             {STATUS_LABELS[status]}
           </span>
           {status === 'error' && app?.error && (
-            <span className="text-xs text-red-600 truncate" title={app.error}>
+            <span className="text-xs text-red-400 truncate" title={app.error}>
               — {app.error.split('\n')[0]}
             </span>
           )}
@@ -97,11 +97,11 @@ export default function Layout() {
             href={app.listenAddr}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-2 mx-3 my-2 px-3 py-2 rounded-lg bg-spin-seagreen/10 hover:bg-spin-seagreen/20 transition-colors group shrink-0"
+            className="flex items-center gap-2 mx-3 my-2 px-3 py-2 rounded-lg bg-spin-seagreen/10 hover:bg-spin-seagreen/[0.18] transition-colors group shrink-0"
             title={`Open app at ${app.listenAddr}`}
           >
             <ExternalLink className="w-3.5 h-3.5 text-spin-seagreen shrink-0" />
-            <span className="text-xs font-medium text-spin-oxfordblue truncate flex-1 group-hover:text-spin-oxfordblue">
+            <span className="text-xs font-medium text-spin-seagreen/90 truncate flex-1">
               {app.listenAddr.replace(/^https?:\/\//, '')}
             </span>
           </a>
@@ -132,18 +132,18 @@ export default function Layout() {
         </nav>
 
         {/* Footer */}
-        <div className="px-4 py-3 border-t border-gray-100 shrink-0">
+        <div className="px-4 py-3 border-t border-white/[0.08] shrink-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <img src="/spin-favicon.png" className="w-4 h-4 opacity-40 shrink-0" alt="" />
-            <span className="text-xs text-gray-400 shrink-0">spin dashboard</span>
+            <img src="/spin-favicon.png" className="w-4 h-4 opacity-40 shrink-0 invert" alt="" />
+            <span className="text-[11px] text-gray-400 shrink-0">spin dashboard</span>
             {sha && (
               <>
-                <span className="text-gray-300 text-xs">·</span>
+                <span className="text-gray-500 text-[11px]">·</span>
                 <a
                   href={`${REPO}/commit/${sha.replace(/-dev$/, '')}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-gray-400 hover:text-gray-600 font-mono truncate transition-colors"
+                  className="text-[11px] text-gray-400 hover:text-gray-200 font-mono truncate transition-colors"
                   title={`Commit ${sha}`}
                 >
                   {sha}
