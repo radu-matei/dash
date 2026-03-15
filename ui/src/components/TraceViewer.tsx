@@ -131,6 +131,13 @@ function flattenTree(nodes: SpanNode[]): SpanNode[] {
   return out
 }
 
+const EXEC_WASM_PREFIX = 'execute_wasm_component '
+
+function spanComponent(span: Span): string {
+  if (span.name?.startsWith(EXEC_WASM_PREFIX)) return span.name.slice(EXEC_WASM_PREFIX.length).trim()
+  return span.component ?? ''
+}
+
 // ─── Formatting ───────────────────────────────────────────────────────────────
 
 function fmtDuration(ms: number): string {
@@ -168,10 +175,11 @@ function fmtNs(ns: number): string {
   return `${(ns / 1_000_000).toFixed(2)}ms`
 }
 
-function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map<string, string>; onClose: () => void }) {
+function SpanDetail({ node, colorMap, effectiveColor, effectiveComponent, onClose }: { node: SpanNode; colorMap: Map<string, string>; effectiveColor?: string; effectiveComponent?: string; onClose: () => void }) {
   const { span } = node
   const isError = span.status === 'ERROR'
-  const color = colorMap.get(span.component ?? '') ?? '#6b7280'
+  const color = effectiveColor ?? colorMap.get(span.component ?? '') ?? '#6b7280'
+  const displayComponent = effectiveComponent ?? span.component
   const attrs = span.attrs ?? {}
   const keyAttrs = KEY_ATTRS.filter(k => attrs[k])
   const otherAttrs = Object.entries(attrs).filter(([k]) => !KEY_ATTRS.includes(k) && !SKIP_ATTRS.has(k))
@@ -202,7 +210,7 @@ function SpanDetail({ node, colorMap, onClose }: { node: SpanNode; colorMap: Map
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 px-4 py-2 border-b border-gray-100 text-gray-500">
         <span>Start: <strong className="text-gray-900">{fmtTime(new Date(span.startTime).getTime())}</strong></span>
         <span>Duration: <strong className="text-gray-900">{fmtDuration(span.durationMs)}</strong></span>
-        {span.component && <span>Component: <strong className="text-gray-900">{span.component}</strong></span>}
+        {displayComponent && <span>Component: <strong className="text-gray-900">{displayComponent}</strong></span>}
         <span className="font-mono text-gray-400">span: {span.spanId.slice(0, 16)}…</span>
         {span.parentId && <span className="font-mono text-gray-400">parent: {span.parentId.slice(0, 16)}…</span>}
       </div>
@@ -285,6 +293,25 @@ function Waterfall({
   onSelectSpan: (id: string | null) => void
 }) {
   const flat = useMemo(() => flattenTree(buildTree(trace.spans)), [trace.spans])
+
+  // Map each span to its effective component by inheriting from the nearest
+  // ancestor execute_wasm_component span (like Jaeger inherits service color).
+  const spanColorComponent = useMemo(() => {
+    const m = new Map<string, string>()
+    const parentMap = new Map<string, string>()
+    for (const s of trace.spans) parentMap.set(s.spanId, s.parentId ?? '')
+    for (const node of flat) {
+      const sc = spanComponent(node.span)
+      if (sc && sc !== 'spin') { m.set(node.span.spanId, sc); continue }
+      let pid = node.span.parentId
+      while (pid && parentMap.has(pid)) {
+        if (m.has(pid)) { m.set(node.span.spanId, m.get(pid)!); break }
+        pid = parentMap.get(pid) || undefined
+      }
+    }
+    return m
+  }, [flat, trace.spans])
+
   const startMs = trace.startMs
   const durMs = trace.durationMs || 1
   const maxDepth = Math.max(...flat.map(n => n.depth), 0)
@@ -314,7 +341,7 @@ function Waterfall({
       <div className="flex border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 shrink-0">
         <div className="w-72 shrink-0 px-4 py-2">Span</div>
         <div className="w-16 shrink-0 px-2 py-2 text-right">Duration</div>
-        <div className="flex-1 py-2 pr-4 relative">
+        <div className="flex-1 py-2 pl-4 pr-4 relative">
           <div className="flex justify-between text-gray-400 font-mono font-normal normal-case tracking-normal">
             {[0, 25, 50, 75, 100].map(p => <span key={p}>{p === 0 ? '0' : fmtDuration(Math.round(durMs * p / 100))}</span>)}
           </div>
@@ -326,7 +353,8 @@ function Waterfall({
         const spanStartMs = new Date(node.span.startTime).getTime()
         const leftPct = Math.max(0, ((spanStartMs - startMs) / durMs) * 100)
         const widthPct = Math.max(0.5, (node.span.durationMs / durMs) * 100)
-        const color = colorMap.get(node.span.component ?? '') ?? '#6b7280'
+        const effectiveComp = spanColorComponent.get(node.span.spanId)
+        const color = (effectiveComp && colorMap.get(effectiveComp)) ?? colorMap.get(node.span.component ?? '') ?? '#6b7280'
         const isError = node.span.status === 'ERROR'
         const isSelected = node.span.spanId === selectedSpanId
         const hasAttrs = Object.keys(node.span.attrs ?? {}).length > 0
@@ -340,7 +368,7 @@ function Waterfall({
             }`}
           >
             {/* Name */}
-            <div className="w-72 shrink-0 flex items-center gap-1.5 py-2 pr-2" style={{ paddingLeft: `${12 + node.depth * 14}px` }}>
+            <div className="w-72 shrink-0 flex items-center gap-1.5 py-2 pr-2 overflow-hidden" style={{ paddingLeft: `${12 + node.depth * 14}px` }}>
               {hasAttrs
                 ? (isSelected ? <ChevronDown className="w-3 h-3 text-blue-500 shrink-0" /> : <ChevronRight className="w-3 h-3 text-gray-300 shrink-0" />)
                 : <span className="w-3 shrink-0" />
@@ -353,19 +381,17 @@ function Waterfall({
                     title={node.span.component ?? undefined}
                   />
               }
-              {node.span.name?.startsWith('execute_wasm_component ') ? (
-                <span className={`inline-flex items-center gap-1 truncate ${isError ? 'text-red-700' : ''}`} title={node.span.name}>
+              {node.span.name?.startsWith('execute_wasm_component ') ? (<>
                   <Cpu className="w-3 h-3 shrink-0" style={{ color }} />
-                  <span className="font-semibold truncate" style={{ color }}>{node.span.name.slice('execute_wasm_component '.length)}</span>
-                </span>
-              ) : (
-                <span className={`truncate font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
+                  <span className={`font-semibold truncate min-w-0 ${isError ? 'text-red-700' : ''}`} style={isError ? undefined : { color }} title={node.span.name}>{node.span.name.slice('execute_wasm_component '.length)}</span>
+              </>) : (
+                <span className={`truncate min-w-0 font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
                   {node.span.name}
                 </span>
               )}
-              {node.span.component && components.length > 1 && !node.span.name?.startsWith('execute_wasm_component ') && (
+              {effectiveComp && components.length > 1 && !node.span.name?.startsWith('execute_wasm_component ') && (
                 <span className="ml-auto shrink-0 text-[10px] font-mono px-1 py-px rounded" style={{ color, opacity: 0.8 }}>
-                  {node.span.component}
+                  {effectiveComp}
                 </span>
               )}
             </div>
@@ -393,7 +419,7 @@ function Waterfall({
             </div>
           </div>
           {isSelected && (
-            <SpanDetail node={node} colorMap={colorMap} onClose={() => onSelectSpan(null)} />
+            <SpanDetail node={node} colorMap={colorMap} effectiveColor={color} effectiveComponent={effectiveComp} onClose={() => onSelectSpan(null)} />
           )}
           </div>
         )
