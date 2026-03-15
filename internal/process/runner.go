@@ -99,7 +99,7 @@ func (r *Runner) Start() error {
 
 	r.cmd = cmd
 	r.pgid = cmd.Process.Pid
-	r.status.Store(int32(StatusRunning))
+	r.status.Store(int32(StatusStarting))
 
 	go r.pipe(stdoutPipe, "stdout", os.Stdout)
 	go r.pipe(stderrPipe, "stderr", os.Stderr)
@@ -193,6 +193,7 @@ func (r *Runner) pipe(reader io.ReadCloser, stream string, terminal io.Writer) {
 		if r.listenAddr.Load() == nil {
 			if addr := extractServingAddr(line); addr != "" {
 				r.listenAddr.Store(addr)
+				r.status.Store(int32(StatusRunning))
 			}
 		}
 	}
