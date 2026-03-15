@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   Activity,
   ChevronsLeft,
@@ -82,6 +82,15 @@ export default function Layout() {
   const status = app?.status ?? 'starting'
   const [collapsed, toggle] = useCollapsed()
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)
+  const location = useLocation()
+  const pageTitle = NAV_SECTIONS
+    .flatMap(s => s.items)
+    .find(i => location.pathname.startsWith(i.to))?.label
+
+  useEffect(() => {
+    const appName = app?.name ?? 'dashboard'
+    document.title = pageTitle ? `${pageTitle} · Spin – ${appName}` : `Spin – ${appName}`
+  }, [pageTitle, app?.name])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -115,7 +124,14 @@ export default function Layout() {
           <img src="/spin-favicon.png" className="w-7 h-7 rounded shrink-0 invert" alt="Spin" />
           {!collapsed && (
             <div className="min-w-0">
-              <div className="text-sm font-bold tracking-wide text-white leading-none">SPIN</div>
+              <a
+                href="https://spinframework.dev"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-bold tracking-wide text-white leading-none hover:text-spin-seagreen transition-colors"
+              >
+                SPIN
+              </a>
               <p className="text-[11px] text-gray-300 truncate mt-0.5">
                 {app?.name ?? 'dashboard'}
               </p>
@@ -212,12 +228,35 @@ export default function Layout() {
           ))}
         </nav>
 
-        {/* Footer: version + collapse toggle */}
+        {/* Footer: branding + version + collapse toggle */}
         <div className={`border-t border-white/[0.08] shrink-0 ${collapsed ? '' : 'px-4 py-2'}`}>
+          {!collapsed && (
+            <div className="flex items-center gap-2 mb-2 px-1">
+              <a
+                href="https://spinframework.dev"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 opacity-50 hover:opacity-90 transition-opacity"
+                title="Spin Framework"
+              >
+                <img src="/spin-favicon.png" className="w-3.5 h-3.5 shrink-0 invert" alt="Spin" />
+                <span className="text-[10px] font-medium text-gray-400">Spin</span>
+              </a>
+              <span className="text-gray-600 text-[10px]">·</span>
+              <a
+                href="https://www.cncf.io"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="opacity-40 hover:opacity-80 transition-opacity"
+                title="A CNCF project"
+              >
+                <img src="/cncf-white.svg" className="h-3" alt="CNCF" />
+              </a>
+            </div>
+          )}
           {!collapsed && sha && (
-            <div className="flex items-center gap-1.5 min-w-0 mb-1.5">
-              <img src="/spin-favicon.png" className="w-3.5 h-3.5 opacity-40 shrink-0 invert" alt="" />
-              <span className="text-[10px] text-gray-500 shrink-0">spin dashboard</span>
+            <div className="flex items-center gap-1.5 min-w-0 mb-1.5 px-1">
+              <span className="text-[10px] text-gray-500 shrink-0">dashboard</span>
               <span className="text-gray-600 text-[10px]">·</span>
               <a
                 href={`${REPO}/commit/${sha.replace(/-dev$/, '')}`}
