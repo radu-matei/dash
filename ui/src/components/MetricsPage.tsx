@@ -206,8 +206,28 @@ function MetricCard({ series, activeComps, colorMap }: {
   const activeList = localComponents.filter(c => activeComps.has(c))
 
   // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
+  // For cumulative monotonic counters, compute deltas so the chart shows the
+  // rate of change rather than a flat cumulative line.
   const chartData = useMemo(() => {
     const pts = series.points.slice(-300)
+
+    if (series.kind === 'counter') {
+      const prev = new Map<string, number>()
+      const timeMap = new Map<string, Record<string, number | string>>()
+      for (const pt of pts) {
+        const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_v'
+        const prevVal = prev.get(comp)
+        prev.set(comp, pt.value)
+        if (prevVal === undefined) continue
+        const delta = Math.max(0, pt.value - prevVal)
+        const time = fmtTime(pt.timestamp)
+        if (!timeMap.has(time)) timeMap.set(time, { time })
+        const row = timeMap.get(time)!
+        row[comp] = ((row[comp] as number) ?? 0) + delta
+      }
+      return Array.from(timeMap.values())
+    }
+
     const timeMap = new Map<string, Record<string, number | string>>()
     for (const pt of pts) {
       const time = fmtTime(pt.timestamp)
@@ -216,15 +236,16 @@ function MetricCard({ series, activeComps, colorMap }: {
       timeMap.get(time)![comp ?? '_v'] = pt.value
     }
     return Array.from(timeMap.values())
-  }, [series.points])
+  }, [series.points, series.kind])
 
-  // Summary bars: for counters accumulate all points; for histograms keep latest
+  // Summary bars: latest value per component.
+  // For cumulative counters the latest value IS the total; for gauges it's the
+  // current reading.  Never sum cumulative counter values across data points.
   const compSummary = useMemo(() => {
     const m = new Map<string, number>()
     for (const pt of series.points) {
       const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
-      if (series.kind === 'counter') m.set(comp, (m.get(comp) ?? 0) + pt.value)
-      else m.set(comp, pt.value)
+      m.set(comp, pt.value)
     }
     return Array.from(m.entries())
       .map(([name, value]) => ({ name, value }))

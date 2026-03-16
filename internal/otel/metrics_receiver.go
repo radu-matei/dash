@@ -157,7 +157,11 @@ func (r *MetricsReceiver) ingest(m *metricspb.Metric) {
 
 	switch d := m.Data.(type) {
 	case *metricspb.Metric_Sum:
-		s.Kind = "counter"
+		if d.Sum.IsMonotonic {
+			s.Kind = "counter"
+		} else {
+			s.Kind = "gauge"
+		}
 		for _, dp := range d.Sum.DataPoints {
 			s.Points = append(s.Points, numberPoint(dp))
 		}
