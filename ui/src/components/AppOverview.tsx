@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   AlertCircle,
   CheckCircle2,
@@ -27,7 +28,6 @@ import {
   Sparkles,
   Terminal,
   Trash2,
-  X,
   Zap,
 } from 'lucide-react'
 import { Icon } from '@iconify/react'
@@ -91,16 +91,18 @@ function LangIcon({ comp, size = 16 }: { comp: ComponentInfo; size?: number }) {
 // ─── Status chip ──────────────────────────────────────────────────────────────
 
 function StatusChip({ status, error }: { status: string; error: string }) {
-  const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string }> = {
-    running:  { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'  },
-    starting: { cls: 'badge-yellow', Icon: Clock,        label: 'Starting' },
-    stopped:  { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'  },
-    error:    { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'    },
+  const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string; spin?: boolean }> = {
+    running:    { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'      },
+    starting:   { cls: 'badge-yellow', Icon: Clock,        label: 'Starting'     },
+    building:   { cls: 'badge-blue',   Icon: Hammer,       label: 'Building…', spin: true },
+    restarting: { cls: 'badge-yellow', Icon: Loader2,      label: 'Restarting…', spin: true },
+    stopped:    { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'      },
+    error:      { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'        },
   }
-  const { cls, Icon, label } = cfg[status] ?? cfg.stopped
+  const { cls, Icon, label, spin: spinning } = cfg[status] ?? cfg.stopped
   return (
     <span className={cls + ' badge text-xs'} title={error || undefined}>
-      <Icon className="w-3 h-3" />
+      <Icon className={`w-3 h-3${spinning ? ' animate-spin' : ''}`} />
       {label}
     </span>
   )
@@ -157,22 +159,6 @@ const TRIGGER_NODE_COLORS: Record<TriggerMeta['color'], {
 }
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
-
-function StatCard({ label, value, Icon, accent }: {
-  label: string; value: string | number; Icon: typeof Layers; accent?: boolean
-}) {
-  return (
-    <div className={`card p-4 flex items-center gap-4 ${accent ? 'border-spin-seagreen/40' : ''}`}>
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : 'bg-gray-100'}`}>
-        <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : 'text-gray-500'}`} />
-      </div>
-      <div>
-        <p className="text-2xl font-bold text-gray-900">{value}</p>
-        <p className="text-xs text-gray-500 mt-0.5">{label}</p>
-      </div>
-    </div>
-  )
-}
 
 // ─── Detail pane ──────────────────────────────────────────────────────────────
 
@@ -242,7 +228,7 @@ function InfoRow({
           target="_blank"
           rel="noopener noreferrer"
           onClick={e => e.stopPropagation()}
-          className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+          className="text-gray-300 hover:text-spin-colablue transition-colors shrink-0"
           title={`Open ${href}`}
         >
           <ExternalLink className="w-3.5 h-3.5" />
@@ -337,55 +323,18 @@ function useLocalStorage(key: string, defaultValue: boolean): [boolean, (v: bool
   return [value, setAndPersist]
 }
 
-// ─── Shared drag-to-resize hook ───────────────────────────────────────────────
-
-function usePaneResize(
-  paneWidth: number,
-  onPaneWidthChange: (w: number) => void,
-) {
-  const isDragging  = useRef(false)
-  const dragStartX  = useRef(0)
-  const dragStartW  = useRef(0)
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!isDragging.current) return
-      const delta = dragStartX.current - e.clientX
-      onPaneWidthChange(Math.max(260, Math.min(700, dragStartW.current + delta)))
-    }
-    const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    isDragging.current = true
-    dragStartX.current = e.clientX
-    dragStartW.current = paneWidth
-    document.body.style.cursor = 'col-resize'
-    e.preventDefault()
-  }
-
-  return handleMouseDown
-}
-
 // ─── Detail pane (component) ──────────────────────────────────────────────────
 
 function DetailPane({
-  component: c, onClose, onSelect, canMutate, paneWidth, onPaneWidthChange, listenAddr,
+  component: c, onClose, onSelect, canMutate, listenAddr,
 }: {
   component: ComponentInfo
   onClose: () => void
   onSelect: (s: Selection) => void
   canMutate: boolean
-  paneWidth: number
-  onPaneWidthChange: (w: number) => void
   listenAddr?: string | null
 }) {
   const { refresh } = useAppStore()
-  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
 
   const [deletingBinding, setDeletingBinding] = useState<{ type: 'kv' | 'sqlite'; name: string } | null>(null)
 
@@ -412,40 +361,26 @@ function DetailPane({
   ]
 
   return (
-    <div
-      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
-      style={{ width: paneWidth }}
-    >
-      {/* Drag handle — left edge */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-blue-300/60 active:bg-blue-400/70 transition-colors"
-        onMouseDown={handleDragMouseDown}
-      />
+    <div className="flex-1 border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden min-h-0">
       {/* ── Header ── */}
-      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-base font-bold text-gray-900">{c.id}</span>
-            {lang && <LangIcon comp={c} size={18} />}
-          </div>
-          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Wasm</span>
-            {digest && (
-              <code className="text-xs text-gray-400 font-mono" title={digest}>
-                @{digest.slice(0, 19)}…
-              </code>
-            )}
-            {!digest && size && (
-              <span className="text-xs text-gray-400">{size}</span>
-            )}
-            {!digest && !size && isRemote && (
-              <code className="text-xs text-gray-400 font-mono truncate max-w-[200px]" title={c.source}>{c.source}</code>
-            )}
-          </div>
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-sm font-semibold text-gray-900">{c.id}</span>
+          {lang && <LangIcon comp={c} size={16} />}
+          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Wasm</span>
+          {digest && (
+            <code className="text-xs text-gray-400 font-mono" title={digest}>
+              @{digest.slice(0, 19)}…
+            </code>
+          )}
+          {!digest && size && (
+            <span className="text-xs text-gray-400">{size}</span>
+          )}
+          {!digest && !size && isRemote && (
+            <code className="text-xs text-gray-400 font-mono truncate max-w-[200px]" title={c.source}>{c.source}</code>
+          )}
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* ── Scrollable body ── */}
@@ -1636,7 +1571,7 @@ const SOURCE_LABEL: Record<string, string> = {
 }
 
 function VariablePane({
-  varName, vars, components, onClose, onSelect, onAddVar, canMutate, paneWidth, onPaneWidthChange,
+  varName, vars, components, onClose, onSelect, onAddVar, canMutate,
 }: {
   varName: string
   vars: VarEntry[]
@@ -1645,16 +1580,11 @@ function VariablePane({
   onSelect: (s: Selection) => void
   onAddVar: () => void
   canMutate: boolean
-  paneWidth: number
-  onPaneWidthChange: (w: number) => void
 }) {
   const entry = vars.find(v => v.key === varName)
   const [revealed, setRevealed] = useState(false)
 
-  // Reset reveal state whenever a different variable is selected.
   useEffect(() => { setRevealed(false) }, [varName])
-
-  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
 
   const usedBy = components.filter(c => {
     const vars = c.variables ?? {}
@@ -1664,36 +1594,23 @@ function VariablePane({
   })
 
   return (
-    <div
-      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
-      style={{ width: paneWidth }}
-    >
-      {/* Drag handle */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 hover:bg-amber-300/60 active:bg-amber-400/70 transition-colors"
-        onMouseDown={handleDragMouseDown}
-      />
-
+    <div className="flex-1 border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden min-h-0">
       {/* Header */}
-      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Key className="w-4 h-4 text-amber-500 shrink-0" />
-            <code className="text-base font-bold text-gray-900">{varName}</code>
-            {entry?.secret && <span className="badge badge-gray text-xs">secret</span>}
-          </div>
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Key className="w-4 h-4 text-amber-500 shrink-0" />
+          <code className="text-sm font-semibold text-gray-900">{varName}</code>
+          {entry?.secret && <span className="badge badge-gray text-xs">secret</span>}
           {entry && (
-            <span className={`mt-1.5 inline-flex items-center gap-1 ${SOURCE_BADGE[entry.source]} badge text-xs`}>
+            <span className={`inline-flex items-center gap-1 ${SOURCE_BADGE[entry.source]} badge text-xs`}>
               {SOURCE_LABEL[entry.source]}
             </span>
           )}
           {!entry && vars.length > 0 && (
-            <p className="text-xs text-gray-400 mt-1">Value not yet resolved</p>
+            <span className="text-xs text-gray-400">Value not yet resolved</span>
           )}
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* Body */}
@@ -1779,17 +1696,14 @@ function VariablePane({
 // ─── Resource pane (KV store / SQLite) ────────────────────────────────────────
 
 function ResourcePane({
-  resKind, resName, components, onClose, onSelect, paneWidth, onPaneWidthChange,
+  resKind, resName, components, onClose, onSelect,
 }: {
   resKind: 'kv' | 'sqlite'
   resName: string
   components: ComponentInfo[]
   onClose: () => void
   onSelect: (s: Selection) => void
-  paneWidth: number
-  onPaneWidthChange: (w: number) => void
 }) {
-  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
   const isKV = resKind === 'kv'
 
   const usedBy = components.filter(c =>
@@ -1799,34 +1713,21 @@ function ResourcePane({
   )
 
   return (
-    <div
-      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
-      style={{ width: paneWidth }}
-    >
-      {/* Drag handle */}
-      <div
-        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors ${isKV ? 'hover:bg-purple-300/60' : 'hover:bg-blue-300/60'}`}
-        onMouseDown={handleDragMouseDown}
-      />
-
+    <div className="flex-1 border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden min-h-0">
       {/* Header */}
-      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isKV ? 'bg-purple-100' : 'bg-blue-100'}`}>
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${isKV ? 'bg-purple-100' : 'bg-blue-100'}`}>
             {isKV
-              ? <Key className="w-4 h-4 text-purple-600" />
-              : <Database className="w-4 h-4 text-blue-600" />}
+              ? <Key className="w-3.5 h-3.5 text-purple-600" />
+              : <Database className="w-3.5 h-3.5 text-blue-600" />}
           </div>
-          <div className="min-w-0">
-            <div className="text-base font-bold text-gray-900 font-mono">{resName}</div>
-            <div className={`text-xs mt-0.5 font-medium ${isKV ? 'text-purple-500' : 'text-blue-500'}`}>
-              {isKV ? 'Key-Value Store' : 'SQLite Database'}
-            </div>
-          </div>
+          <span className="text-sm font-semibold text-gray-900 font-mono">{resName}</span>
+          <span className={`text-xs font-medium ${isKV ? 'text-purple-500' : 'text-blue-500'}`}>
+            {isKV ? 'Key-Value Store' : 'SQLite Database'}
+          </span>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* Body */}
@@ -1896,18 +1797,14 @@ function ResourcePane({
 // ─── Service pane (AI model / outbound host) ──────────────────────────────────
 
 function ServicePane({
-  kind, name, components, onClose, onSelect, paneWidth, onPaneWidthChange,
+  kind, name, components, onClose, onSelect,
 }: {
   kind: 'ai-model' | 'outbound-host'
   name: string
   components: ComponentInfo[]
   onClose: () => void
   onSelect: (s: Selection) => void
-  paneWidth: number
-  onPaneWidthChange: (w: number) => void
 }) {
-  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
-
   const isAI       = kind === 'ai-model'
   const isTemplate = !isAI && isVariableTemplate(name)
 
@@ -1919,7 +1816,6 @@ function ServicePane({
 
   // Colour theme
   const accent = isAI ? 'indigo' : isTemplate ? 'amber' : 'teal'
-  const dragHover   = `hover:bg-${accent}-300/60`
   const iconBg      = `bg-${accent}-100`
   const iconColor   = `text-${accent}-600`
   const infoBox     = `bg-${accent}-50 border-${accent}-100`
@@ -1928,36 +1824,23 @@ function ServicePane({
   const infoLink    = `text-${accent}-600 hover:text-${accent}-800`
 
   return (
-    <div
-      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
-      style={{ width: paneWidth }}
-    >
-      {/* Drag handle */}
-      <div
-        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors ${dragHover}`}
-        onMouseDown={handleDragMouseDown}
-      />
-
+    <div className="flex-1 border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden min-h-0">
       {/* Header */}
-      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${iconBg}`}>
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
             {isAI
-              ? <Sparkles className={`w-4 h-4 ${iconColor}`} />
-              : <Globe    className={`w-4 h-4 ${iconColor}`} />}
+              ? <Sparkles className={`w-3.5 h-3.5 ${iconColor}`} />
+              : <Globe    className={`w-3.5 h-3.5 ${iconColor}`} />}
           </div>
-          <div className="min-w-0">
-            <div className="text-base font-bold text-gray-900 font-mono truncate" title={name}>
-              {isAI ? name : hostNodeLabel(name)}
-            </div>
-            <div className={`text-xs mt-0.5 font-medium text-${accent}-500`}>
-              {isAI ? 'AI / LLM Model' : isTemplate ? 'Variable URL' : hostDescription(name)}
-            </div>
-          </div>
+          <span className="text-sm font-semibold text-gray-900 font-mono truncate" title={name}>
+            {isAI ? name : hostNodeLabel(name)}
+          </span>
+          <span className={`text-xs font-medium text-${accent}-500`}>
+            {isAI ? 'AI / LLM Model' : isTemplate ? 'Variable URL' : hostDescription(name)}
+          </span>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* Body */}
@@ -2047,50 +1930,33 @@ function ServicePane({
 // ─── Trigger pane ─────────────────────────────────────────────────────────────
 
 function TriggerPane({
-  triggerType, triggers, components, onClose, onSelect, paneWidth, onPaneWidthChange, listenAddr,
+  triggerType, triggers, components, onClose, onSelect, listenAddr,
 }: {
   triggerType: string
   triggers: TriggerInfo[]
   components: ComponentInfo[]
   onClose: () => void
   onSelect: (s: Selection) => void
-  paneWidth: number
-  onPaneWidthChange: (w: number) => void
   listenAddr?: string | null
 }) {
-  const handleDragMouseDown = usePaneResize(paneWidth, onPaneWidthChange)
   const meta = getTriggerMeta(triggerType)
   const TIcon = meta.icon
   const colors = TRIGGER_NODE_COLORS[meta.color]
 
   return (
-    <div
-      className="shrink-0 border-l border-gray-200 bg-gray-50 flex flex-col overflow-hidden relative"
-      style={{ width: paneWidth }}
-    >
-      {/* Drag handle */}
-      <div
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 transition-colors"
-        style={{ background: 'transparent' }}
-        onMouseDown={handleDragMouseDown}
-      />
-
+    <div className="flex-1 border-t border-gray-200 bg-gray-50 flex flex-col overflow-hidden min-h-0">
       {/* Header */}
-      <div className="flex items-start justify-between px-5 pt-5 pb-4 bg-white border-b border-gray-100 shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${colors.iconBgHi}`}>
-            <TIcon className={`w-4 h-4 ${colors.iconColor}`} />
+      <div className="flex items-center justify-between px-4 py-2 bg-white border-b border-gray-200 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${colors.iconBgHi}`}>
+            <TIcon className={`w-3.5 h-3.5 ${colors.iconColor}`} />
           </div>
-          <div className="min-w-0">
-            <div className="text-base font-bold text-gray-900">{meta.label}</div>
-            <div className="text-xs text-gray-400 mt-0.5">
-              {triggers.length === 1 ? '1 trigger' : `${triggers.length} triggers`}
-            </div>
-          </div>
+          <span className="text-sm font-semibold text-gray-900">{meta.label}</span>
+          <span className="text-xs text-gray-400">
+            {triggers.length === 1 ? '1 trigger' : `${triggers.length} triggers`}
+          </span>
         </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 transition-colors shrink-0 ml-3 mt-0.5">
-          <X className="w-4 h-4" />
-        </button>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-700 text-base px-1 leading-none shrink-0">✕</button>
       </div>
 
       {/* Body */}
@@ -2119,7 +1985,7 @@ function TriggerPane({
                     href={routeHref}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-gray-300 hover:text-blue-500 transition-colors shrink-0"
+                    className="text-gray-300 hover:text-spin-colablue transition-colors shrink-0"
                     title={`Open ${routeHref}`}
                   >
                     <ExternalLink className="w-3.5 h-3.5" />
@@ -2152,14 +2018,49 @@ function TriggerPane({
 
 
 export default function AppOverview() {
-  const { app, refresh }    = useAppStore()
+  const { app, refresh, notifyRestart, notifyBuilding } = useAppStore()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [error]             = useState<string | null>(null)
   const loading             = app === null
   const [selected, setSelected] = useState<Selection | null>(null)
 
+  useEffect(() => {
+    if (!app) return
+    const compParam = searchParams.get('component')
+    const selectParam = searchParams.get('select')
+
+    let sel: Selection | null = null
+
+    if (compParam && app.components.some(c => c.id === compParam)) {
+      sel = { kind: 'component', componentId: compParam }
+    } else if (selectParam) {
+      const [kind, ...rest] = selectParam.split(':')
+      const value = rest.join(':')
+      if (kind === 'variable' && value) sel = { kind: 'variable', varName: value }
+      else if (kind === 'kv' && value) sel = { kind: 'resource', resKind: 'kv', resName: value }
+      else if (kind === 'sqlite' && value) sel = { kind: 'resource', resKind: 'sqlite', resName: value }
+      else if (kind === 'ai' && value) sel = { kind: 'ai-model', modelName: value }
+      else if (kind === 'host' && value) sel = { kind: 'outbound-host', hostPattern: value }
+    }
+
+    if (sel) {
+      setSelected(sel)
+      setSearchParams({}, { replace: true })
+    }
+  }, [searchParams, app, setSearchParams])
+
   const [showAddComp, setShowAddComp]       = useState(false)
   const [showAddBinding, setShowAddBinding] = useState(false)
   const [showAddVar, setShowAddVar]         = useState(false)
+
+  useEffect(() => {
+    const dialog = searchParams.get('dialog')
+    if (!dialog) return
+    if (dialog === 'add-component') setShowAddComp(true)
+    else if (dialog === 'add-variable') setShowAddVar(true)
+    else if (dialog === 'add-service') setShowAddBinding(true)
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
   const [showEditToml, setShowEditToml]     = useState(false)
   const [restarting, setRestarting]           = useState(false)
   const [restartMenuOpen, setRestartMenuOpen] = useState(false)
@@ -2167,8 +2068,23 @@ export default function AppOverview() {
   const restartMenuRef = useRef<HTMLDivElement>(null)
   const addMenuRef     = useRef<HTMLDivElement>(null)
 
-  // Shared pane width — remembered across all pane types and open/close cycles.
-  const [paneWidth, setPaneWidth] = useState(384)
+  // Graph area height when a detail pane is open (top/bottom split).
+  const [graphHeight, setGraphHeight] = useState(300)
+  const isDragging  = useRef(false)
+  const dragStartY  = useRef(0)
+  const dragStartH  = useRef(0)
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return
+      const delta = e.clientY - dragStartY.current
+      setGraphHeight(Math.max(100, Math.min(600, dragStartH.current + delta)))
+    }
+    const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
 
   // Vars are fetched once and refreshed whenever the app reloads.
   const [vars, setVars] = useState<VarEntry[]>([])
@@ -2302,7 +2218,8 @@ export default function AppOverview() {
               onClick={async () => {
                 setRestarting(true)
                 try { await restartSpin() } catch { /* ignore */ }
-                setTimeout(() => { setRestarting(false); refresh() }, 2000)
+                notifyRestart()
+                setTimeout(() => setRestarting(false), 2000)
               }}
               title="Restart the Spin process"
             >
@@ -2328,7 +2245,8 @@ export default function AppOverview() {
                     setRestartMenuOpen(false)
                     setRestarting(true)
                     try { await buildAndRestart() } catch { /* ignore */ }
-                    setTimeout(() => { setRestarting(false); refresh() }, 2000)
+                    notifyBuilding()
+                    setTimeout(() => setRestarting(false), 2000)
                   }}
                 >
                   <Hammer className="w-3.5 h-3.5 shrink-0 text-gray-500" />
@@ -2341,23 +2259,18 @@ export default function AppOverview() {
         </div>
       </div>
 
-      {/* Body: main content + optional detail pane */}
-      <div className="flex-1 overflow-hidden flex">
-        <div className="flex-1 overflow-y-auto">
+      {/* Body: graph (top) + optional detail pane (bottom) */}
+      <div className="flex-1 overflow-hidden flex flex-col">
+        <div
+          className={`overflow-y-auto ${selected ? 'shrink-0' : 'flex-1'}`}
+          style={selected ? { height: graphHeight } : undefined}
+        >
           <div className="p-6 space-y-6">
             {error && (
               <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                 <AlertCircle className="w-4 h-4 shrink-0" />{error}
               </div>
             )}
-
-            {/* Stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatCard label="Components" value={components.length} Icon={Layers} accent />
-              <StatCard label="Triggers"   value={triggers.length}   Icon={Zap} />
-              <StatCard label="Variables"  value={app?.varCount ?? 0} Icon={Key} />
-              <StatCard label="Status"     value={app?.status ?? '—'} Icon={CheckCircle2} />
-            </div>
 
             <div className="card p-6">
               {components.length === 0 ? (
@@ -2378,6 +2291,22 @@ export default function AppOverview() {
           </div>
         </div>
 
+        {/* ── Resize handle ──────────────────────────────────── */}
+        {selected && (
+          <div
+            className="h-1.5 shrink-0 cursor-row-resize bg-gray-100 hover:bg-blue-200 active:bg-blue-300 transition-colors flex items-center justify-center group"
+            onMouseDown={e => {
+              isDragging.current = true
+              dragStartY.current = e.clientY
+              dragStartH.current = graphHeight
+              document.body.style.cursor = 'row-resize'
+              e.preventDefault()
+            }}
+          >
+            <div className="w-10 h-0.5 rounded-full bg-gray-300 group-hover:bg-blue-400 transition-colors" />
+          </div>
+        )}
+
         {/* Detail pane — component */}
         {selectedComponent && (
           <DetailPane
@@ -2385,8 +2314,6 @@ export default function AppOverview() {
             onClose={() => setSelected(null)}
             onSelect={setSelected}
             canMutate={canMutate}
-            paneWidth={paneWidth}
-            onPaneWidthChange={setPaneWidth}
             listenAddr={app?.listenAddr}
           />
         )}
@@ -2401,8 +2328,6 @@ export default function AppOverview() {
             onSelect={setSelected}
             onAddVar={() => setShowAddVar(true)}
             canMutate={canMutate}
-            paneWidth={paneWidth}
-            onPaneWidthChange={setPaneWidth}
           />
         )}
 
@@ -2414,8 +2339,6 @@ export default function AppOverview() {
             components={components}
             onClose={() => setSelected(null)}
             onSelect={setSelected}
-            paneWidth={paneWidth}
-            onPaneWidthChange={setPaneWidth}
             listenAddr={app?.listenAddr}
           />
         )}
@@ -2428,8 +2351,6 @@ export default function AppOverview() {
             components={components}
             onClose={() => setSelected(null)}
             onSelect={setSelected}
-            paneWidth={paneWidth}
-            onPaneWidthChange={setPaneWidth}
           />
         )}
 
@@ -2441,8 +2362,6 @@ export default function AppOverview() {
             components={components}
             onClose={() => setSelected(null)}
             onSelect={setSelected}
-            paneWidth={paneWidth}
-            onPaneWidthChange={setPaneWidth}
           />
         )}
       </div>

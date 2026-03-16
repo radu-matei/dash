@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppProvider } from './store/appContext'
 import { LogProvider } from './store/logContext'
 import { TestRunProvider } from './store/testRunContext'
+import { CommandPaletteProvider } from './components/CommandPalette'
 import Layout from './components/Layout'
 import AppOverview from './components/AppOverview'
 import LogViewer from './components/LogViewer'
@@ -15,6 +16,7 @@ export default function App() {
     <LogProvider>
     <TestRunProvider>
       <BrowserRouter>
+      <CommandPaletteProvider>
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Navigate to="/app" replace />} />
@@ -25,6 +27,7 @@ export default function App() {
             <Route path="tests" element={<HttpTesting />} />
           </Route>
         </Routes>
+      </CommandPaletteProvider>
       </BrowserRouter>
     </TestRunProvider>
     </LogProvider>

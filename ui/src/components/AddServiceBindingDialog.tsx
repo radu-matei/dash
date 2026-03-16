@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle2, Database, Globe, Key, Loader2, Sparkles, X } from 'lucide-react'
 import { addBinding } from '../api/client'
 import type { ComponentInfo } from '../api/client'
@@ -66,6 +66,12 @@ const TYPE_META: Record<ServiceBindingType, {
 }
 
 export default function AddServiceBindingDialog({ components, onClose, onSuccess, initialComponentId }: Props) {
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
   const [componentId, setComponentId] = useState(initialComponentId ?? (components[0]?.id ?? ''))
   const [type, setType]               = useState<ServiceBindingType>('kv')
   const [value, setValue]             = useState('')

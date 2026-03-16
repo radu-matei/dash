@@ -11,6 +11,8 @@ import {
   getTraces, getOtelMetrics,
   type Span, type MetricSeries,
 } from '../api/client'
+import ComponentTabs from './ComponentTabs'
+import { componentHex } from '../componentColors'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -121,14 +123,12 @@ function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; titl
 const TT = { contentStyle: { fontSize: 11, borderRadius: 8, border: '1px solid #e5e7eb' }, labelStyle: { fontWeight: 600 } }
 
 // Consistent color palette shared across component pills, chart lines, and bars
-const COMP_PALETTE = ['#7c3aed', '#0284c7', '#059669', '#d97706', '#db2777', '#0891b2', '#65a30d', '#ea580c']
 
 // ─── OTel metrics section ─────────────────────────────────────────────────────
 
 function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
   const entries = Object.values(series)
 
-  // Collect all component IDs seen across every metric series, sorted stably.
   const allComponents = useMemo(() => {
     const set = new Set<string>()
     for (const s of entries) {
@@ -140,36 +140,18 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
     return Array.from(set).sort()
   }, [entries])
 
-  // Stable color map: component name → palette color.
   const colorMap = useMemo(() => {
     const m = new Map<string, string>()
-    allComponents.forEach((c, i) => m.set(c, COMP_PALETTE[i % COMP_PALETTE.length]))
+    allComponents.forEach(c => m.set(c, componentHex(c)))
     return m
   }, [allComponents])
 
-  // Global active-component set.  New components are auto-activated exactly
-  // once via seenRef; after that, deselections survive data refreshes.
-  const seenRef = useRef(new Set<string>())
-  const [activeComps, setActiveComps] = useState<Set<string>>(new Set())
+  const [activeTab, setActiveTab] = useState('all')
 
-  useEffect(() => {
-    const fresh = allComponents.filter(c => !seenRef.current.has(c))
-    if (!fresh.length) return
-    fresh.forEach(c => seenRef.current.add(c))
-    setActiveComps(prev => {
-      const next = new Set(prev)
-      fresh.forEach(c => next.add(c))
-      return next
-    })
-  }, [allComponents])
-
-  const toggleComp = (c: string) =>
-    setActiveComps(prev => {
-      const next = new Set(prev)
-      if (next.has(c) && next.size > 1) next.delete(c)
-      else next.add(c)
-      return next
-    })
+  const activeComps = useMemo(() => {
+    if (activeTab === 'all') return new Set(allComponents)
+    return new Set([activeTab])
+  }, [activeTab, allComponents])
 
   if (!entries.length) {
     return (
@@ -183,32 +165,13 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
 
   return (
     <div className="space-y-3">
-      {/* Global component filter — one set of pills controls all charts */}
       {allComponents.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 px-1">
-          <span className="text-xs text-gray-400 font-medium shrink-0">Components:</span>
-          {allComponents.map(c => {
-            const color = colorMap.get(c)!
-            const active = activeComps.has(c)
-            return (
-              <button
-                key={c}
-                onClick={() => toggleComp(c)}
-                title={active ? `Hide ${c}` : `Show ${c}`}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-mono border transition-all"
-                style={{
-                  borderColor: color,
-                  color: active ? color : '#9ca3af',
-                  backgroundColor: active ? `${color}15` : 'transparent',
-                  opacity: active ? 1 : 0.45,
-                }}
-              >
-                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: active ? color : '#9ca3af' }} />
-                {c}
-              </button>
-            )
-          })}
-        </div>
+        <ComponentTabs
+          componentIds={allComponents}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          allTab={{ label: 'All components' }}
+        />
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -243,8 +206,28 @@ function MetricCard({ series, activeComps, colorMap }: {
   const activeList = localComponents.filter(c => activeComps.has(c))
 
   // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
+  // For cumulative monotonic counters, compute deltas so the chart shows the
+  // rate of change rather than a flat cumulative line.
   const chartData = useMemo(() => {
     const pts = series.points.slice(-300)
+
+    if (series.kind === 'counter') {
+      const prev = new Map<string, number>()
+      const timeMap = new Map<string, Record<string, number | string>>()
+      for (const pt of pts) {
+        const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_v'
+        const prevVal = prev.get(comp)
+        prev.set(comp, pt.value)
+        if (prevVal === undefined) continue
+        const delta = Math.max(0, pt.value - prevVal)
+        const time = fmtTime(pt.timestamp)
+        if (!timeMap.has(time)) timeMap.set(time, { time })
+        const row = timeMap.get(time)!
+        row[comp] = ((row[comp] as number) ?? 0) + delta
+      }
+      return Array.from(timeMap.values())
+    }
+
     const timeMap = new Map<string, Record<string, number | string>>()
     for (const pt of pts) {
       const time = fmtTime(pt.timestamp)
@@ -253,15 +236,16 @@ function MetricCard({ series, activeComps, colorMap }: {
       timeMap.get(time)![comp ?? '_v'] = pt.value
     }
     return Array.from(timeMap.values())
-  }, [series.points])
+  }, [series.points, series.kind])
 
-  // Summary bars: for counters accumulate all points; for histograms keep latest
+  // Summary bars: latest value per component.
+  // For cumulative counters the latest value IS the total; for gauges it's the
+  // current reading.  Never sum cumulative counter values across data points.
   const compSummary = useMemo(() => {
     const m = new Map<string, number>()
     for (const pt of series.points) {
       const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
-      if (series.kind === 'counter') m.set(comp, (m.get(comp) ?? 0) + pt.value)
-      else m.set(comp, pt.value)
+      m.set(comp, pt.value)
     }
     return Array.from(m.entries())
       .map(([name, value]) => ({ name, value }))

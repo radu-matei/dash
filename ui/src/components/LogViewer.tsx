@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowDown, Braces, ChevronDown, ChevronRight, Clock, Cpu, Search, Settings2, Trash2, X } from 'lucide-react'
 import { useLogStore } from '../store/logContext'
 import { useAppStore } from '../store/appContext'
 import type { LogLine } from '../api/client'
+import { componentTw } from '../componentColors'
 
 // ─── ANSI stripping ───────────────────────────────────────────────────────────
 
@@ -148,18 +149,6 @@ function HttpCell({ l }: { l: ParsedLine }) {
 }
 
 // ─── Component color palette ──────────────────────────────────────────────────
-
-const PALETTE = [
-  { dot: 'bg-blue-500',    text: 'text-blue-600',    active: 'border-b-2 border-blue-500'    },
-  { dot: 'bg-violet-500',  text: 'text-violet-600',  active: 'border-b-2 border-violet-500'  },
-  { dot: 'bg-emerald-500', text: 'text-emerald-600', active: 'border-b-2 border-emerald-500' },
-  { dot: 'bg-amber-500',   text: 'text-amber-600',   active: 'border-b-2 border-amber-500'   },
-  { dot: 'bg-pink-500',    text: 'text-pink-600',    active: 'border-b-2 border-pink-500'    },
-  { dot: 'bg-teal-500',    text: 'text-teal-600',    active: 'border-b-2 border-teal-500'    },
-  { dot: 'bg-orange-500',  text: 'text-orange-600',  active: 'border-b-2 border-orange-500'  },
-  { dot: 'bg-indigo-500',  text: 'text-indigo-600',  active: 'border-b-2 border-indigo-500'  },
-]
-function palette(idx: number) { return PALETTE[idx % PALETTE.length] }
 
 // ─── JSON detection & grouping ────────────────────────────────────────────────
 
@@ -431,7 +420,7 @@ type ActiveTab = 'spin' | string  // 'spin' or a component id
 export default function LogViewer() {
   const { rawLines, clear } = useLogStore()
   const { app } = useAppStore()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
 
   // URL-driven time-range filter (from TraceViewer deep-link)
@@ -440,12 +429,27 @@ export default function LogViewer() {
   const traceLabel = searchParams.get('label') ?? null
 
   // Tab + filter state
-  const [activeTab, setActiveTab]     = useState<ActiveTab>('spin')
+  const [activeTab, setActiveTabRaw]  = useState<ActiveTab>(searchParams.get('component') ?? 'spin')
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL')
   const [spinStream, setSpinStream]   = useState<StreamFilter>('all')
   const [subStream, setSubStream]     = useState<SubStream>('both')
-  const [search, setSearch]           = useState('')
+  const [search, setSearch]           = useState(searchParams.get('search') ?? '')
   const [autoScroll, setAutoScroll]   = useState(true)
+
+  const setActiveTab = useCallback((tab: ActiveTab) => {
+    setActiveTabRaw(tab)
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      if (tab === 'spin') next.delete('component')
+      else next.set('component', tab)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
+
+  useEffect(() => {
+    const comp = searchParams.get('component')
+    if (comp && comp !== activeTab) setActiveTabRaw(comp)
+  }, [searchParams])
 
   const bottomRef    = useRef<HTMLDivElement>(null!)
   const containerRef = useRef<HTMLDivElement>(null!)
@@ -594,12 +598,12 @@ export default function LogViewer() {
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto">
+      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto scrollbar-hide h-[37px]">
 
         {/* Spin tab */}
         <button
           onClick={() => setActiveTab('spin')}
-          className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors mr-1
+          className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors mr-1
             ${activeTab === 'spin'
               ? 'border-b-2 border-spin-oxfordblue text-spin-oxfordblue bg-white -mb-px'
               : 'text-gray-500 hover:text-gray-700'
@@ -614,8 +618,8 @@ export default function LogViewer() {
         </button>
 
         {/* Component tabs */}
-        {compIds.map((id, idx) => {
-          const pal    = palette(idx)
+        {compIds.map((id) => {
+          const pal    = componentTw(id)
           const status = compStatuses[id] ?? 'idle'
           const errs   = compErrors(id)
           const isActive = activeTab === id
@@ -623,7 +627,7 @@ export default function LogViewer() {
             <button
               key={id}
               onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap transition-colors
+              className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors
                 ${isActive
                   ? `bg-white -mb-px ${pal.active} ${pal.text}`
                   : 'text-gray-500 hover:text-gray-700'
@@ -665,7 +669,7 @@ export default function LogViewer() {
               <button
                 key={s.value}
                 onClick={() => setSpinStream(s.value)}
-                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-gray-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
               >{s.label}</button>
             ))}
           </div>
@@ -679,7 +683,7 @@ export default function LogViewer() {
                 key={s}
                 onClick={() => setSubStream(s)}
                 className={`px-2.5 py-1 transition-colors ${subStream === s
-                  ? s === 'stderr' ? 'bg-rose-600 text-white' : 'bg-gray-700 text-white'
+                  ? s === 'stderr' ? 'bg-rose-600 text-white' : 'bg-spin-oxfordblue text-white'
                   : 'bg-white text-gray-600 hover:bg-gray-50'}`}
               >{s}</button>
             ))}

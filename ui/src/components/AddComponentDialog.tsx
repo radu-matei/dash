@@ -13,6 +13,12 @@ interface Props {
 export default function AddComponentDialog({ onClose, onSuccess }: Props) {
   const { app } = useAppStore()
 
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [onClose])
+
   // ── Template catalogue ────────────────────────────────────────────────────
   const [templates, setTemplates]     = useState<TemplateInfo[]>([])
   const [tmplLoading, setTmplLoading] = useState(true)
