@@ -4,6 +4,7 @@ import {
   Activity,
   ChevronsLeft,
   ChevronsRight,
+  Database,
   ExternalLink,
   FlaskConical,
   LayoutDashboard,
@@ -36,23 +37,35 @@ const STATUS_LABELS: Record<string, string> = {
 
 // ─── Navigation config ────────────────────────────────────────────────────────
 
-const NAV_SECTIONS = [
-  {
-    label: 'Application',
-    items: [
-      { to: '/app', label: 'Overview', Icon: LayoutDashboard },
-      { to: '/logs', label: 'Logs', Icon: ScrollText },
-      { to: '/traces', label: 'Traces', Icon: Activity },
-      { to: '/metrics', label: 'Metrics', Icon: TrendingUp },
-    ],
-  },
-  {
+type NavItem = { to: string; label: string; Icon: typeof LayoutDashboard }
+type NavSection = { label: string; items: NavItem[] }
+
+function buildNavSections(): NavSection[] {
+  const sections: NavSection[] = [
+    {
+      label: 'Application',
+      items: [
+        { to: '/app', label: 'Overview', Icon: LayoutDashboard },
+        { to: '/logs', label: 'Logs', Icon: ScrollText },
+        { to: '/traces', label: 'Traces', Icon: Activity },
+        { to: '/metrics', label: 'Metrics', Icon: TrendingUp },
+      ],
+    },
+    {
+      label: 'Data',
+      items: [
+        { to: '/kv', label: 'KV Explorer', Icon: Database },
+      ],
+    },
+  ]
+  sections.push({
     label: 'Testing',
     items: [
       { to: '/tests', label: 'HTTP Tests', Icon: FlaskConical },
     ],
-  },
-]
+  })
+  return sections
+}
 
 // ─── Persist sidebar state ───────────────────────────────────────────────────
 
@@ -83,7 +96,8 @@ export default function Layout() {
   const [collapsed, toggle] = useCollapsed()
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)
   const location = useLocation()
-  const pageTitle = NAV_SECTIONS
+  const navSections = buildNavSections()
+  const pageTitle = navSections
     .flatMap(s => s.items)
     .find(i => location.pathname.startsWith(i.to))?.label
 
@@ -199,7 +213,7 @@ export default function Layout() {
 
         {/* Navigation */}
         <nav className={`flex-1 overflow-y-auto py-3 space-y-4 ${collapsed ? 'px-1.5' : 'px-2'}`}>
-          {NAV_SECTIONS.map(section => (
+          {navSections.map(section => (
             <div key={section.label}>
               {!collapsed && <p className="section-label">{section.label}</p>}
               <ul className="space-y-0.5">

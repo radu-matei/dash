@@ -60,6 +60,10 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/templates", templatesHandler())
 	mux.HandleFunc("/api/version", versionHandler(opts.CommitSHA))
 
+	// --- KV Explorer routes (always registered; stores can be added dynamically) ---
+	mux.HandleFunc("/api/kv/stores", kvStoresHandler(opts.Cfg, cfgMu))
+	mux.HandleFunc("/api/kv/stores/", kvProxyHandler(opts.Runner))
+
 	// --- Hurl HTTP testing routes ---
 	mux.HandleFunc("/api/hurl-tests", hurlTestsHandler(opts.Dir))
 	mux.HandleFunc("/api/hurl-run", hurlRunHandler(opts.Dir, opts.Runner, opts.Cfg))

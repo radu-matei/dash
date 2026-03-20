@@ -143,6 +143,7 @@ function CommandPaletteInner({
       { id: 'p-logs', category: 'page', label: 'Logs', Icon: ScrollText, onSelect: () => exec(() => navigate('/logs')) },
       { id: 'p-traces', category: 'page', label: 'Traces', Icon: Activity, onSelect: () => exec(() => navigate('/traces')) },
       { id: 'p-metrics', category: 'page', label: 'Metrics', Icon: TrendingUp, onSelect: () => exec(() => navigate('/metrics')) },
+      { id: 'p-kv', category: 'page', label: 'KV Explorer', Icon: Database, onSelect: () => exec(() => navigate('/kv')) },
       { id: 'p-tests', category: 'page', label: 'HTTP Tests', Icon: FlaskConical, onSelect: () => exec(() => navigate('/tests')) },
     ]
     if (!q) {

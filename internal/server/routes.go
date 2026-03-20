@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +18,114 @@ import (
 	"github.com/spinframework/dash/internal/otel"
 	"github.com/spinframework/dash/internal/process"
 )
+
+// ── KV Explorer proxy ─────────────────────────────────────────────────────────
+
+// hasKVStores reports whether any component has KV store bindings (excluding
+// the injected dashboard explorer component).
+func hasKVStores(cfg *config.AppConfig) bool {
+	for _, c := range cfg.Components {
+		if c.ID == "dash-kv-explorer" {
+			continue
+		}
+		if len(c.KeyValueStores) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// kvStoresHandler returns the list of KV stores from the parsed config.
+func kvStoresHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfgMu.RLock()
+		defer cfgMu.RUnlock()
+		seen := make(map[string]struct{})
+		var stores []string
+		for _, c := range cfg.Components {
+			if c.ID == "dash-kv-explorer" {
+				continue
+			}
+			for _, s := range c.KeyValueStores {
+				if _, ok := seen[s]; !ok {
+					seen[s] = struct{}{}
+					stores = append(stores, s)
+				}
+			}
+		}
+		if stores == nil {
+			stores = []string{}
+		}
+		jsonOK(w, stores)
+	}
+}
+
+// kvProxyHandler proxies KV explorer API requests to the injected component
+// running inside the Spin app.
+//
+// Dashboard route                  → Spin app route
+// GET  /api/kv/stores/{s}/keys     → GET  /internal/kv-explorer/api/stores/{s}
+// GET  /api/kv/stores/{s}/keys/{k} → GET  /internal/kv-explorer/api/stores/{s}/keys/{k}
+// POST /api/kv/stores/{s}/keys     → POST /internal/kv-explorer/api/stores/{s}
+// DELETE /api/kv/stores/{s}/keys/{k} → DELETE /internal/kv-explorer/api/stores/{s}/keys/{k}
+func kvProxyHandler(runner *process.Runner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		addr := runner.ListenAddr()
+		if addr == "" {
+			jsonErr(w, http.StatusServiceUnavailable, "Spin app is not running yet")
+			return
+		}
+
+		// Map /api/kv/stores/{store}/keys[/{key}] → /internal/kv-explorer/api/stores/{store}[/keys/{key}]
+		rest := strings.TrimPrefix(r.URL.Path, "/api/kv/stores/")
+		if rest == r.URL.Path {
+			jsonErr(w, http.StatusBadRequest, "invalid KV path")
+			return
+		}
+
+		// rest is now "{store}/keys" or "{store}/keys/{key}"
+		parts := strings.SplitN(rest, "/keys", 2)
+		storeName := parts[0]
+		if storeName == "" {
+			jsonErr(w, http.StatusBadRequest, "store name required")
+			return
+		}
+
+		var targetPath string
+		keyPart := ""
+		if len(parts) > 1 {
+			keyPart = parts[1] // "" or "/{key}"
+		}
+
+		if keyPart == "" || keyPart == "/" {
+			// Operating on the store: list keys or set key
+			targetPath = "/internal/kv-explorer/api/stores/" + storeName
+		} else {
+			// Operating on a specific key: /keys/{key}
+			targetPath = "/internal/kv-explorer/api/stores/" + storeName + "/keys" + keyPart
+		}
+
+		targetURL := strings.TrimRight(addr, "/") + targetPath
+
+		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+		if err != nil {
+			jsonErr(w, http.StatusInternalServerError, "creating proxy request: "+err.Error())
+			return
+		}
+		proxyReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+
+		resp, err := http.DefaultClient.Do(proxyReq)
+		if err != nil {
+			jsonErr(w, http.StatusBadGateway, "KV explorer request failed: "+err.Error())
+			return
+		}
+		defer resp.Body.Close()
+
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}
+}
 
 func jsonOK(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -72,6 +181,7 @@ func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runn
 			"variableKeys":   varKeys,
 			"listenAddr":     listenAddr,
 			"allowMutations": allowMutations,
+			"hasKV":          hasKVStores(cfg),
 		})
 	}
 }
