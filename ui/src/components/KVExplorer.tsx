@@ -99,7 +99,7 @@ export default function KVExplorer() {
   const openEditForm = () => {
     if (!selectedKey || selectedValue === null) return
     setFormKey(selectedKey)
-    setFormValue(selectedValue)
+    setFormValue(decodeBase64Value(selectedValue))
     setFormEditing(true)
     setShowForm(true)
   }
