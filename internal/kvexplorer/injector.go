@@ -91,6 +91,17 @@ func ManifestPath(dir string) string {
 	return filepath.Join(dir, manifestFile)
 }
 
+// CopyManifest writes a plain copy of spin.toml to the temp manifest path
+// (no KV explorer injection). Used when no KV stores exist yet so that
+// --from always has a valid target.
+func CopyManifest(dir string) error {
+	original, err := os.ReadFile(filepath.Join(dir, "spin.toml"))
+	if err != nil {
+		return fmt.Errorf("reading spin.toml: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, manifestFile), original, 0o644)
+}
+
 // Cleanup removes the temporary manifest.
 func Cleanup(dir string) {
 	os.Remove(filepath.Join(dir, manifestFile))

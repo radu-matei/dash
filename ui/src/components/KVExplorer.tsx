@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  AlertCircle, Database, FileCode2, Key, Plus, RefreshCw, Search, Trash2, X,
+  AlertCircle, Database, ExternalLink, FileCode2, Key, Plus, RefreshCw, Search, Trash2, X,
 } from 'lucide-react'
 import {
   getKVStores, getKVKeys, getKVKey, setKVKey, deleteKVKey,
 } from '../api/client'
 import { useAppStore } from '../store/appContext'
+import AddServiceBindingDialog from './AddServiceBindingDialog'
 import ResizablePanel from './ResizablePanel'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function KVExplorer() {
-  const { app } = useAppStore()
+  const { app, refresh } = useAppStore()
 
   const [stores, setStores] = useState<string[]>([])
   const [activeStore, setActiveStore] = useState<string | null>(null)
@@ -110,8 +111,14 @@ export default function KVExplorer() {
       await setKVKey(activeStore, formKey, formValue)
       setShowForm(false)
       await loadKeys()
+      // Re-fetch from the API so we get the properly encoded value.
       setSelectedKey(formKey)
-      setSelectedValue(formValue)
+      try {
+        const res = await getKVKey(activeStore, formKey)
+        setSelectedValue(res.value)
+      } catch {
+        setSelectedValue(null)
+      }
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -142,37 +149,85 @@ export default function KVExplorer() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  // Add binding dialog (shown on empty state when --allow-edits)
+  const [showBindingDialog, setShowBindingDialog] = useState(false)
+
   if (!app?.hasKV) {
     return (
-      <div className="flex-1 flex items-center justify-center text-gray-400 p-8">
-        <div className="text-center">
-          <Database className="w-12 h-12 mx-auto mb-3 opacity-40" />
-          <p className="text-lg font-medium text-gray-500 mb-1">No KV stores</p>
-          <p className="text-sm">
-            Add a <code className="px-1.5 py-0.5 bg-gray-100 rounded text-xs">key_value_stores</code> binding
-            to a component in spin.toml to enable the KV Explorer.
-          </p>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="page-header shrink-0">
+          <div className="flex items-center gap-3">
+            <h1 className="page-title">KV Explorer</h1>
+          </div>
         </div>
+        <div className="flex-1 flex flex-col items-center justify-center text-gray-400 gap-4 px-8">
+          <Database className="w-12 h-12 opacity-20" />
+          <div className="text-center space-y-1">
+            <p className="text-sm font-medium text-gray-500">No KV stores configured</p>
+            <p className="text-xs text-gray-400 max-w-sm">
+              Add a <code className="font-mono">key_value_stores</code> binding
+              to a component in your spin.toml to start using the KV Explorer.
+            </p>
+          </div>
+          <pre className="text-left text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-4 text-gray-500 max-w-sm w-full">
+{`[component.my-app]
+source = "app.wasm"
+key_value_stores = ["default"]`}
+          </pre>
+          <div className="flex gap-2">
+            {app?.allowMutations ? (
+              <button
+                onClick={() => setShowBindingDialog(true)}
+                className="btn-primary text-xs h-8 px-4"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add KV Store Binding
+              </button>
+            ) : (
+              <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                Pass <code className="font-mono">--allow-edits</code> to add bindings
+              </span>
+            )}
+            <a
+              href="https://developer.fermyon.com/spin/v3/key-value-store-tutorial"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-secondary text-xs h-8 px-4"
+            >
+              KV Store guide
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+        {showBindingDialog && (
+          <AddServiceBindingDialog
+            components={app?.components ?? []}
+            onClose={() => setShowBindingDialog(false)}
+            onSuccess={() => {
+              setShowBindingDialog(false)
+              refresh()
+            }}
+          />
+        )}
       </div>
     )
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Header */}
-      <header className="flex items-center gap-3 px-6 py-4 border-b border-gray-200 bg-white shrink-0">
-        <Database className="w-5 h-5 text-gray-400" />
-        <h1 className="text-lg font-semibold text-gray-800">KV Explorer</h1>
-        <div className="flex-1" />
+      <div className="page-header shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="page-title">KV Explorer</h1>
+        </div>
         <button
           onClick={loadKeys}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+          className="btn-secondary text-xs h-8 px-3"
           title="Refresh"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
         </button>
-      </header>
+      </div>
 
       {error && (
         <div className="flex items-center gap-2 px-6 py-2 bg-red-50 border-b border-red-100 text-red-600 text-sm">

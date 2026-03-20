@@ -40,7 +40,7 @@ const STATUS_LABELS: Record<string, string> = {
 type NavItem = { to: string; label: string; Icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
 
-function buildNavSections(hasKV: boolean): NavSection[] {
+function buildNavSections(): NavSection[] {
   const sections: NavSection[] = [
     {
       label: 'Application',
@@ -51,15 +51,13 @@ function buildNavSections(hasKV: boolean): NavSection[] {
         { to: '/metrics', label: 'Metrics', Icon: TrendingUp },
       ],
     },
-  ]
-  if (hasKV) {
-    sections.push({
+    {
       label: 'Data',
       items: [
         { to: '/kv', label: 'KV Explorer', Icon: Database },
       ],
-    })
-  }
+    },
+  ]
   sections.push({
     label: 'Testing',
     items: [
@@ -98,7 +96,7 @@ export default function Layout() {
   const [collapsed, toggle] = useCollapsed()
   const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.userAgent)
   const location = useLocation()
-  const navSections = buildNavSections(app?.hasKV ?? false)
+  const navSections = buildNavSections()
   const pageTitle = navSections
     .flatMap(s => s.items)
     .find(i => location.pathname.startsWith(i.to))?.label

@@ -21,6 +21,20 @@ import (
 
 // ── KV Explorer proxy ─────────────────────────────────────────────────────────
 
+// hasKVStores reports whether any component has KV store bindings (excluding
+// the injected dashboard explorer component).
+func hasKVStores(cfg *config.AppConfig) bool {
+	for _, c := range cfg.Components {
+		if c.ID == "dash-kv-explorer" {
+			continue
+		}
+		if len(c.KeyValueStores) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // kvStoresHandler returns the list of KV stores from the parsed config.
 func kvStoresHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +149,7 @@ func statusHandler(runner *process.Runner) http.HandlerFunc {
 }
 
 // appHandler returns the full application structure (components, triggers, vars, status).
-func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runner, allowMutations, hasKV bool) http.HandlerFunc {
+func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runner, allowMutations bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		listenAddr := runner.ListenAddr()
 		if listenAddr == "" {
@@ -167,7 +181,7 @@ func appHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex, runner *process.Runn
 			"variableKeys":   varKeys,
 			"listenAddr":     listenAddr,
 			"allowMutations": allowMutations,
-			"hasKV":          hasKV,
+			"hasKV":          hasKVStores(cfg),
 		})
 	}
 }
