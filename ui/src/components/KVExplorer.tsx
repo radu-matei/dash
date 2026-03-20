@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   AlertCircle, Database, FileCode2, Key, Plus, RefreshCw, Search, Trash2, X,
 } from 'lucide-react'
@@ -6,6 +6,7 @@ import {
   getKVStores, getKVKeys, getKVKey, setKVKey, deleteKVKey,
 } from '../api/client'
 import { useAppStore } from '../store/appContext'
+import ResizablePanel from './ResizablePanel'
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,7 @@ export default function KVExplorer() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Value display mode
+  // Second-layer base64 decode (for values that are themselves base64)
   const [decodeBase64, setDecodeBase64] = useState(false)
 
   // Add / Edit form
@@ -76,7 +77,6 @@ export default function KVExplorer() {
     if (!activeStore) return
     setSelectedKey(key)
     setSelectedValue(null)
-    setDecodeBase64(false)
     try {
       const res = await getKVKey(activeStore, key)
       setSelectedValue(res.value)
@@ -184,85 +184,90 @@ export default function KVExplorer() {
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* ── Left panel: store tabs + key list ───────────────────────── */}
-        <div className="w-80 shrink-0 border-r border-gray-200 flex flex-col bg-white">
-          {/* Store tabs */}
-          <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-100 overflow-x-auto shrink-0">
-            {stores.map(s => (
-              <button
-                key={s}
-                onClick={() => setActiveStore(s)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
-                  s === activeStore
-                    ? 'bg-spin-seagreen/10 text-spin-seagreen'
-                    : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                }`}
-              >
-                <Database className="w-3 h-3 inline-block mr-1 -mt-0.5" />
-                {s}
-              </button>
-            ))}
-          </div>
-
-          {/* Search + Add */}
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 shrink-0">
-            <div className="flex-1 relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Filter keys…"
-                value={filter}
-                onChange={e => setFilter(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-spin-seagreen/40 focus:border-spin-seagreen/40"
-              />
+      <ResizablePanel
+        storageKey="kv-panel"
+        defaultWidth={288}
+        minWidth={200}
+        maxWidth={480}
+        panel={
+          <>
+            {/* Store tabs */}
+            <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-100 overflow-x-auto shrink-0">
+              {stores.map(s => (
+                <button
+                  key={s}
+                  onClick={() => setActiveStore(s)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
+                    s === activeStore
+                      ? 'bg-spin-seagreen/10 text-spin-seagreen'
+                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+                  }`}
+                >
+                  <Database className="w-3 h-3 inline-block mr-1 -mt-0.5" />
+                  {s}
+                </button>
+              ))}
             </div>
-            <button
-              onClick={openAddForm}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-spin-seagreen hover:bg-spin-seagreen/90 rounded-lg transition-colors"
-              title="Add key"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
 
-          {/* Key list */}
-          <div className="flex-1 overflow-y-auto">
-            {loading && (
-              <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
-                Loading…
+            {/* Search + Add */}
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100 shrink-0">
+              <div className="flex-1 relative">
+                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Filter keys…"
+                  value={filter}
+                  onChange={e => setFilter(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-spin-seagreen/40 focus:border-spin-seagreen/40"
+                />
               </div>
-            )}
-            {!loading && filteredKeys.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-                <Key className="w-8 h-8 mb-2 opacity-40" />
-                <p className="text-sm">{keys.length === 0 ? 'No keys in this store' : 'No matching keys'}</p>
-              </div>
-            )}
-            {!loading && filteredKeys.map(k => (
               <button
-                key={k}
-                onClick={() => selectKey(k)}
-                className={`w-full text-left px-4 py-2.5 text-sm border-b border-gray-50 transition-colors ${
-                  k === selectedKey
-                    ? 'bg-spin-seagreen/5 text-spin-seagreen font-medium'
-                    : 'text-gray-700 hover:bg-gray-50'
-                }`}
+                onClick={openAddForm}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-spin-seagreen hover:bg-spin-seagreen/90 rounded-lg transition-colors"
+                title="Add key"
               >
-                <span className="flex items-center gap-2">
-                  <Key className="w-3 h-3 shrink-0 opacity-40" />
-                  <span className="truncate font-mono text-xs">{k}</span>
-                </span>
+                <Plus className="w-3.5 h-3.5" />
               </button>
-            ))}
-          </div>
+            </div>
 
-          {/* Key count */}
-          <div className="px-4 py-2 border-t border-gray-100 text-[11px] text-gray-400 shrink-0">
-            {filteredKeys.length}{filter ? ` / ${keys.length}` : ''} key{keys.length !== 1 ? 's' : ''}
-          </div>
-        </div>
+            {/* Key list */}
+            <div className="flex-1 overflow-y-auto">
+              {loading && (
+                <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
+                  Loading…
+                </div>
+              )}
+              {!loading && filteredKeys.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+                  <Key className="w-8 h-8 mb-2 opacity-40" />
+                  <p className="text-sm">{keys.length === 0 ? 'No keys in this store' : 'No matching keys'}</p>
+                </div>
+              )}
+              {!loading && filteredKeys.map(k => (
+                <button
+                  key={k}
+                  onClick={() => selectKey(k)}
+                  className={`w-full text-left px-4 py-2.5 text-sm border-b border-gray-50 transition-colors ${
+                    k === selectedKey
+                      ? 'bg-spin-seagreen/5 text-spin-seagreen font-medium'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Key className="w-3 h-3 shrink-0 opacity-40" />
+                    <span className="truncate font-mono text-xs">{k}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
 
+            {/* Key count */}
+            <div className="px-4 py-2 border-t border-gray-100 text-[11px] text-gray-400 shrink-0">
+              {filteredKeys.length}{filter ? ` / ${keys.length}` : ''} key{keys.length !== 1 ? 's' : ''}
+            </div>
+          </>
+        }
+      >
         {/* ── Right panel: value viewer / form ────────────────────────── */}
         <div className="flex-1 flex flex-col overflow-hidden bg-gray-50">
           {showForm ? (
@@ -315,8 +320,10 @@ export default function KVExplorer() {
                 <Key className="w-4 h-4 text-gray-400" />
                 <span className="font-mono text-sm text-gray-800 truncate flex-1">{selectedKey}</span>
 
-                {/* Base64 decode toggle — shown when value looks like base64 */}
-                {selectedValue !== null && looksLikeBase64(selectedValue) && (
+                {/* Second-layer base64 decode toggle — for values that are
+                    themselves base64 in the store (the transport layer encoding
+                    is always stripped automatically). */}
+                {selectedValue !== null && looksLikeBase64(decodeBase64Value(selectedValue)) && (
                   <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
                     <button
                       onClick={() => setDecodeBase64(false)}
@@ -361,9 +368,10 @@ export default function KVExplorer() {
                 {selectedValue === null ? (
                   <div className="text-gray-400 text-sm">Loading…</div>
                 ) : (
-                  <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-4">
-                    {formatValue(decodeBase64 ? tryDecodeBase64(selectedValue) : selectedValue)}
-                  </pre>
+                  <ValueDisplay value={(() => {
+                    const decoded = decodeBase64Value(selectedValue)
+                    return decodeBase64 ? decodeBase64Value(decoded) : decoded
+                  })()} />
                 )}
               </div>
             </div>
@@ -377,7 +385,7 @@ export default function KVExplorer() {
             </div>
           )}
         </div>
-      </div>
+      </ResizablePanel>
     </div>
   )
 }
@@ -385,32 +393,92 @@ export default function KVExplorer() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Heuristic: does this string look like it could be base64-encoded?
- *  Must be at least 8 chars, only base64 alphabet, and length is roughly
- *  right (base64 output is ~4/3 of input, so non-base64 text that happens
- *  to match the alphabet is unlikely for longer strings). */
+ *  Must be at least 8 chars, only base64 alphabet + padding. */
 function looksLikeBase64(value: string): boolean {
   if (value.length < 8) return false
-  // Trim surrounding whitespace / newlines for the check
-  const trimmed = value.trim()
-  return /^[A-Za-z0-9+/\n\r]+=*$/.test(trimmed)
+  return /^[A-Za-z0-9+/\n\r]+=*$/.test(value.trim())
 }
 
-/** Try to decode a base64 string. Returns the decoded text or the original
- *  value with an error note if decoding fails. */
-function tryDecodeBase64(value: string): string {
+/** Decode a base64-encoded value from the KV explorer API.
+ *  Go's json.Marshal automatically base64-encodes []byte fields, so all
+ *  values arrive base64-encoded. We decode them to show the real content. */
+function decodeBase64Value(value: string): string {
   try {
     return atob(value.trim())
   } catch {
-    return `[base64 decode failed]\n${value}`
+    // If decoding fails, the value might already be a plain string
+    return value
   }
 }
 
-/** Try to pretty-print JSON values, fall back to raw string. */
-function formatValue(value: string): string {
-  try {
-    const parsed = JSON.parse(value)
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    return value
+/** Render a value with JSON syntax highlighting when applicable. */
+function ValueDisplay({ value }: { value: string }) {
+  // Try to parse as JSON for syntax highlighting
+  let json: unknown = undefined
+  try { json = JSON.parse(value) } catch { /* not JSON */ }
+
+  if (json !== undefined) {
+    const pretty = JSON.stringify(json, null, 2)
+    return (
+      <pre className="text-sm font-mono whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-4 leading-relaxed">
+        {highlightJSON(pretty)}
+      </pre>
+    )
   }
+
+  return (
+    <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-4">
+      {value}
+    </pre>
+  )
+}
+
+/** Tokenize and syntax-highlight a JSON string. */
+function highlightJSON(json: string): ReactNode[] {
+  const nodes: ReactNode[] = []
+  // Regex matches: strings, numbers, booleans, null, braces/brackets, colons/commas
+  const re = /("(?:[^"\\]|\\.)*")\s*(:)?|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)|(\btrue\b|\bfalse\b)|(\bnull\b)|([{}[\]])|([,:])/g
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+
+  while ((match = re.exec(json)) !== null) {
+    // Whitespace/newlines between tokens
+    if (match.index > lastIndex) {
+      nodes.push(json.slice(lastIndex, match.index))
+    }
+
+    if (match[1] !== undefined) {
+      if (match[2] !== undefined) {
+        // Key string followed by colon
+        nodes.push(<span key={match.index} className="text-purple-600">{match[1]}</span>)
+        nodes.push(<span key={match.index + 'c'} className="text-gray-400">{match[2]}</span>)
+      } else {
+        // Value string
+        nodes.push(<span key={match.index} className="text-emerald-600">{match[1]}</span>)
+      }
+    } else if (match[3] !== undefined) {
+      // Number
+      nodes.push(<span key={match.index} className="text-blue-600">{match[3]}</span>)
+    } else if (match[4] !== undefined) {
+      // Boolean
+      nodes.push(<span key={match.index} className="text-amber-600 font-medium">{match[4]}</span>)
+    } else if (match[5] !== undefined) {
+      // null
+      nodes.push(<span key={match.index} className="text-red-400 font-medium">{match[5]}</span>)
+    } else if (match[6] !== undefined) {
+      // Braces / brackets
+      nodes.push(<span key={match.index} className="text-gray-500">{match[6]}</span>)
+    } else if (match[7] !== undefined) {
+      // Comma / colon
+      nodes.push(<span key={match.index} className="text-gray-400">{match[7]}</span>)
+    }
+
+    lastIndex = re.lastIndex
+  }
+
+  if (lastIndex < json.length) {
+    nodes.push(json.slice(lastIndex))
+  }
+
+  return nodes
 }
