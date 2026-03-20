@@ -37,6 +37,9 @@ type Options struct {
 	// AllowMutations controls whether spin.toml mutation endpoints are active.
 	// Must be explicitly opted into via --allow-edits on the CLI.
 	AllowMutations bool
+	// HasKV is true when the app has KV stores and the KV explorer component
+	// was injected into the temporary manifest.
+	HasKV bool
 	// CommitSHA is the git commit hash injected at build time (via ldflags).
 	// Falls back to "dev" for local builds.
 	CommitSHA string
@@ -53,12 +56,18 @@ func New(opts Options) (*http.ServeMux, error) {
 	// --- Read-only API routes ---
 	mux.Handle("/api/logs", opts.Hub)
 	mux.HandleFunc("/api/status", statusHandler(opts.Runner))
-	mux.HandleFunc("/api/app", appHandler(opts.Cfg, cfgMu, opts.Runner, opts.AllowMutations))
+	mux.HandleFunc("/api/app", appHandler(opts.Cfg, cfgMu, opts.Runner, opts.AllowMutations, opts.HasKV))
 	mux.HandleFunc("/api/vars", varsHandler(opts.Cfg, cfgMu))
 	mux.HandleFunc("/api/traces", tracesHandler(opts.OTel))
 	mux.HandleFunc("/api/otel-metrics", otelMetricsHandler(opts.OTelMetrics))
 	mux.HandleFunc("/api/templates", templatesHandler())
 	mux.HandleFunc("/api/version", versionHandler(opts.CommitSHA))
+
+	// --- KV Explorer routes ---
+	if opts.HasKV {
+		mux.HandleFunc("/api/kv/stores", kvStoresHandler(opts.Cfg, cfgMu))
+		mux.HandleFunc("/api/kv/stores/", kvProxyHandler(opts.Runner))
+	}
 
 	// --- Hurl HTTP testing routes ---
 	mux.HandleFunc("/api/hurl-tests", hurlTestsHandler(opts.Dir))

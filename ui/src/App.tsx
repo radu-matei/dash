@@ -9,6 +9,7 @@ import LogViewer from './components/LogViewer'
 import TraceViewer from './components/TraceViewer'
 import MetricsPage from './components/MetricsPage'
 import HttpTesting from './components/HttpTesting'
+import KVExplorer from './components/KVExplorer'
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
             <Route path="logs" element={<LogViewer />} />
             <Route path="traces" element={<TraceViewer />} />
             <Route path="metrics" element={<MetricsPage />} />
+            <Route path="kv" element={<KVExplorer />} />
             <Route path="tests" element={<HttpTesting />} />
           </Route>
         </Routes>

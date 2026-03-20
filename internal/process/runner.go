@@ -46,6 +46,11 @@ type Runner struct {
 	extraEnv []string
 	logFn    LogFunc
 
+	// BeforeStart, if set, is called at the beginning of every Start()
+	// (including restarts). Use it to regenerate temporary manifests or
+	// perform other pre-flight work.
+	BeforeStart func() error
+
 	cmd        *exec.Cmd
 	pgid       int
 	mu         sync.Mutex
@@ -73,6 +78,12 @@ func New(spinBin string, args []string, extraEnv []string, logFn LogFunc) *Runne
 func (r *Runner) Start() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	if r.BeforeStart != nil {
+		if err := r.BeforeStart(); err != nil {
+			r.logFn("system", fmt.Sprintf("pre-start hook: %v", err))
+		}
+	}
 
 	r.done = make(chan struct{})
 

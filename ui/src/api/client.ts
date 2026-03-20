@@ -82,6 +82,8 @@ export interface AppInfo {
   listenAddr?: string
   /** True only when the dashboard was started with --allow-edits. */
   allowMutations: boolean
+  /** True when the app has KV stores and the explorer component was injected. */
+  hasKV: boolean
 }
 
 export const getApp = (signal?: AbortSignal) => get<AppInfo>('/api/app', signal)
@@ -280,4 +282,52 @@ export const runHurlTest = (path: string, variables?: Record<string, string>) =>
 
 export const deleteHurlFile = (path: string) =>
   post<MutationResult>('/api/hurl-delete', { path })
+
+// ── KV Explorer ──────────────────────────────────────────────────────────────
+
+export interface KVKeysResponse {
+  store: string
+  keys: string[]
+}
+
+export interface KVEntryResponse {
+  store: string
+  key: string
+  value: string
+}
+
+/** List all KV store names from the app config. */
+export const getKVStores = () => get<string[]>('/api/kv/stores')
+
+/** List all keys in a store (proxied to the injected KV explorer component). */
+export const getKVKeys = (store: string) =>
+  get<KVKeysResponse>(`/api/kv/stores/${encodeURIComponent(store)}/keys`)
+
+/** Get the value of a key (key is base64-encoded in the URL by the component). */
+export const getKVKey = (store: string, key: string) =>
+  get<KVEntryResponse>(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeSafeKey(key)}`)
+
+/** Set (upsert) a key-value pair. */
+export const setKVKey = (store: string, key: string, value: string) =>
+  post<{ ok: boolean }>(`/api/kv/stores/${encodeURIComponent(store)}/keys`, { key, value })
+
+/** Delete a key from a store. */
+export async function deleteKVKey(store: string, key: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeSafeKey(key)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((body as { error?: string }).error ?? res.statusText)
+  }
+  return res.json()
+}
+
+/** Encode a key for the spin-kv-explorer URL format.
+ *  Matches DecodeSafeKey in the Go component: replace `-` back to `/`,
+ *  then base64.StdEncoding.DecodeString(). So we base64-encode and only
+ *  replace `/` with `-`, keeping `+` and `=` padding intact. */
+function encodeSafeKey(key: string): string {
+  return btoa(key).replace(/\//g, '-')
+}
 

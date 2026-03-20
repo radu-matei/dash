@@ -17,6 +17,7 @@ import (
 	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"github.com/spinframework/dash/internal/config"
+	"github.com/spinframework/dash/internal/kvexplorer"
 	"github.com/spinframework/dash/internal/otel"
 	"github.com/spinframework/dash/internal/process"
 	"github.com/spinframework/dash/internal/server"
@@ -108,8 +109,39 @@ func run(cmd *cobra.Command, args []string) error {
 		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
 	}
 
+	// If the app uses KV stores, inject the KV explorer component into a
+	// temporary manifest so the dashboard can browse them. The real spin.toml
+	// is never modified.
+	kvStores := kvexplorer.CollectKVStores(cfg)
+	hasKV := len(kvStores) > 0
+
+	spinArgs := []string{"up"}
+	if hasKV {
+		manifestPath, injErr := kvexplorer.InjectManifest(cwd, kvStores)
+		if injErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: KV explorer injection failed: %v\n", injErr)
+		} else {
+			spinArgs = append(spinArgs, "--from", manifestPath)
+			fmt.Printf("▶  KV Explorer: enabled (stores: %s)\n", strings.Join(kvStores, ", "))
+		}
+	}
+	spinArgs = append(spinArgs, args...)
+
 	// Build the child process runner.
-	runner := process.New(spinBin, append([]string{"up"}, args...), extraEnv, hub.Publish)
+	runner := process.New(spinBin, spinArgs, extraEnv, hub.Publish)
+
+	// On every (re)start, regenerate the temp manifest so it picks up any
+	// config changes (e.g. newly added KV bindings).
+	if hasKV {
+		runner.BeforeStart = func() error {
+			stores := kvexplorer.CollectKVStores(cfg)
+			if len(stores) == 0 {
+				return nil
+			}
+			_, err := kvexplorer.InjectManifest(cwd, stores)
+			return err
+		}
+	}
 
 	// Set up the HTTP mux.
 	if allowEdits {
@@ -128,6 +160,7 @@ func run(cmd *cobra.Command, args []string) error {
 		EnvOverrides:   envOverrides,
 		CliOverrides:   cliOverrides,
 		AllowMutations: allowEdits,
+		HasKV:          hasKV,
 		CommitSHA:      CommitSHA,
 	})
 	if err != nil {
@@ -206,6 +239,9 @@ func run(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\n▶  Shutting down…")
 	runner.Stop()
+
+	// Clean up the temporary KV explorer manifest.
+	kvexplorer.Cleanup(cwd)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
