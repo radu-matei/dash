@@ -24,6 +24,14 @@ export default {
           colablue:      '#0E8FDD',
         },
       },
+      borderRadius: {
+        '10': '10px',
+        '14': '14px',
+        '16': '16px',
+      },
+      spacing: {
+        '4.5': '18px',
+      },
       boxShadow: {
         card: '0 1px 3px 0 rgba(0,0,0,.06), 0 1px 2px -1px rgba(0,0,0,.06)',
         'card-hover': '0 4px 14px 0 rgba(0,0,0,.08), 0 2px 4px -1px rgba(0,0,0,.05)',

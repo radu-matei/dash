@@ -359,7 +359,7 @@ function CommandPaletteInner({
           <input
             ref={inputRef}
             type="text"
-            className="flex-1 bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none"
+            className="input flex-1 border-0 shadow-none bg-transparent text-sm text-gray-900 placeholder-gray-400 outline-none"
             placeholder="Search pages, actions, components, services…"
             value={query}
             onChange={e => { setQuery(e.target.value); setSelectedIndex(0) }}

@@ -93,9 +93,9 @@ function LangIcon({ comp, size = 16 }: { comp: ComponentInfo; size?: number }) {
 function StatusChip({ status, error }: { status: string; error: string }) {
   const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string; spin?: boolean }> = {
     running:    { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'      },
-    starting:   { cls: 'badge-yellow', Icon: Clock,        label: 'Starting'     },
+    starting:   { cls: 'badge-amber',  Icon: Clock,        label: 'Starting'     },
     building:   { cls: 'badge-blue',   Icon: Hammer,       label: 'Building…', spin: true },
-    restarting: { cls: 'badge-yellow', Icon: Loader2,      label: 'Restarting…', spin: true },
+    restarting: { cls: 'badge-amber',  Icon: Loader2,      label: 'Restarting…', spin: true },
     stopped:    { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'      },
     error:      { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'        },
   }
@@ -367,7 +367,7 @@ function DetailPane({
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold text-gray-900">{c.id}</span>
           {lang && <LangIcon comp={c} size={16} />}
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Wasm</span>
+          <span className="badge badge-purple badge-sm">Wasm</span>
           {digest && (
             <code className="text-xs text-gray-400 font-mono" title={digest}>
               @{digest.slice(0, 19)}…
@@ -1559,8 +1559,8 @@ function TopologyGraph({
 
 const SOURCE_BADGE: Record<string, string> = {
   'spin.toml':    'badge-blue',
-  '.env':         'badge-yellow',
-  'SPIN_VARIABLE':'badge-orange',
+  '.env':         'badge-amber',
+  'SPIN_VARIABLE':'badge-amber',
   '--variable':   'badge-green',
 }
 const SOURCE_LABEL: Record<string, string> = {
@@ -1682,7 +1682,7 @@ function VariablePane({
         {/* Add variable shortcut */}
         {canMutate && (
           <button
-            className="w-full btn-secondary text-xs justify-center"
+            className="w-full btn-accent text-xs justify-center"
             onClick={onAddVar}
           >
             <Plus className="w-3.5 h-3.5" /> Add another variable
@@ -2119,7 +2119,7 @@ export default function AppOverview() {
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
       {[1, 2, 3].map(i => (
-        <div key={i} className="card p-4">
+        <div key={i} className="card p-5">
           <div className="skeleton h-5 w-48 mb-2" />
           <div className="skeleton h-4 w-64" />
         </div>
@@ -2171,7 +2171,7 @@ export default function AppOverview() {
           {/* Add dropdown menu */}
           <div className="relative" ref={addMenuRef}>
             <button
-              className="btn-secondary text-xs"
+              className="btn-accent text-xs"
               disabled={!canMutate}
               onClick={() => setAddMenuOpen(o => !o)}
               title={canMutate ? 'Add a component, variable, or service binding' : 'Requires --allow-edits'}
@@ -2272,7 +2272,7 @@ export default function AppOverview() {
               </div>
             )}
 
-            <div className="card p-6">
+            <div className="card p-5">
               {components.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-2">
                   <Network className="w-8 h-8 opacity-25" />

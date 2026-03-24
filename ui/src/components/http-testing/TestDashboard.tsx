@@ -86,7 +86,7 @@ function TestFileCard({
       onClick={onOpen}
       className={`card card-hover cursor-pointer border-l-4 ${statusColor(lastRun)} transition-all`}
     >
-      <div className="p-4">
+      <div className="p-5">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
             {statusIcon(lastRun)}
@@ -213,7 +213,7 @@ export default function TestDashboard({
         </div>
         <div className="flex gap-2">
           {canEdit ? (
-            <button onClick={onNewTest} className="btn-primary text-xs h-8 px-4">
+            <button onClick={onNewTest} className="btn-accent text-xs h-8 px-4">
               <Plus className="w-3.5 h-3.5" /> New Test
             </button>
           ) : (

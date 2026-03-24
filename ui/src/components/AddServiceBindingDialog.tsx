@@ -119,8 +119,8 @@ export default function AddServiceBindingDialog({ components, onClose, onSuccess
   const canSubmit = !busy && !!componentId && !!value && nameValid
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <div className="modal-backdrop flex items-center justify-center">
+      <div className="modal max-w-lg overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
@@ -236,7 +236,7 @@ export default function AddServiceBindingDialog({ components, onClose, onSuccess
           )}
 
           {/* Actions */}
-          <div className="flex justify-end gap-2 pt-1">
+          <div className="flex items-center justify-end gap-2 mt-6 pt-4 border-t border-gray-100">
             <button type="button" className="btn-secondary" onClick={onClose}>
               {done ? 'Close' : 'Cancel'}
             </button>

@@ -72,10 +72,10 @@ export default function ResizablePanel({
 
   const handle = (
     <div
-      className="w-1.5 shrink-0 cursor-col-resize bg-gray-100 hover:bg-blue-200 active:bg-blue-300 transition-colors flex items-center justify-center group"
+      className="w-1.5 shrink-0 cursor-col-resize bg-gray-200 hover:bg-spin-oxfordblue/20 active:bg-spin-oxfordblue/30 transition-colors duration-150 flex items-center justify-center group"
       onMouseDown={onMouseDown}
     >
-      <div className="h-10 w-0.5 rounded-full bg-gray-300 group-hover:bg-blue-400 transition-colors" />
+      <div className="h-10 w-0.5 rounded-full bg-gray-300 group-hover:bg-spin-oxfordblue/40 transition-colors duration-150" />
     </div>
   )
 

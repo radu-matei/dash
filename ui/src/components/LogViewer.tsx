@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowDown, Braces, Check, ChevronDown, ChevronRight, Clock, Copy, Cpu, Search, Settings2, Trash2, X } from 'lucide-react'
+import { Braces, Check, ChevronDown, ChevronRight, Clock, Copy, Cpu, Pause, Search, Settings2, Trash2, X } from 'lucide-react'
 import { useLogStore } from '../store/logContext'
 import { useAppStore } from '../store/appContext'
 import type { LogLine } from '../api/client'
@@ -80,11 +80,11 @@ function fmtMs(ms: number): string {
 // ─── Visual helpers ───────────────────────────────────────────────────────────
 
 const LEVEL_BADGE: Record<Level, string> = {
-  ERROR: 'bg-red-100 text-red-700 border border-red-200',
-  WARN:  'bg-amber-100 text-amber-700 border border-amber-200',
-  INFO:  'bg-blue-100 text-blue-700 border border-blue-200',
-  DEBUG: 'bg-gray-100 text-gray-500 border border-gray-200',
-  TRACE: 'bg-gray-50 text-gray-400 border border-gray-200',
+  ERROR: 'badge-red',
+  WARN:  'badge-amber',
+  INFO:  'badge-blue',
+  DEBUG: 'badge-gray',
+  TRACE: 'badge-gray opacity-60',
 }
 const LEVEL_ROW: Record<Level, string> = {
   ERROR: 'bg-red-50/50', WARN: 'bg-amber-50/30', INFO: '', DEBUG: '', TRACE: 'opacity-60',
@@ -93,7 +93,7 @@ const LEVEL_ROW: Record<Level, string> = {
 function LevelBadge({ level }: { level: Level | null }) {
   if (!level) return <span className="w-14 shrink-0" />
   return (
-    <span className={`inline-flex items-center justify-center px-1.5 py-px rounded text-xs font-mono font-semibold w-14 shrink-0 ${LEVEL_BADGE[level]}`}>
+    <span className={`inline-flex items-center justify-center badge-sm font-mono font-semibold w-14 shrink-0 ${LEVEL_BADGE[level]}`}>
       {level}
     </span>
   )
@@ -118,7 +118,7 @@ function HighlightText({ text, search }: { text: string; search: string }) {
     <>
       {parts.map((part, i) =>
         re.test(part)
-          ? <mark key={i} className="bg-yellow-200 text-inherit rounded-sm px-px">{part}</mark>
+          ? <mark key={i} className="bg-amber-100 text-inherit rounded-sm px-px">{part}</mark>
           : part
       )}
     </>
@@ -297,33 +297,7 @@ function JsonBlock({ group, compact, search }: { group: JsonGroup; compact?: boo
 // ─── Filter types ─────────────────────────────────────────────────────────────
 
 type LevelFilter  = 'ALL' | Level
-type StreamFilter = 'all' | 'stdout' | 'stderr' | 'system'
-
 const LEVEL_OPTS: LevelFilter[] = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
-const STREAM_OPTS: { value: StreamFilter; label: string }[] = [
-  { value: 'all',    label: 'All' },
-  { value: 'stdout', label: 'stdout' },
-  { value: 'stderr', label: 'stderr' },
-  { value: 'system', label: 'System' },
-]
-
-// ─── Tab indicator status ─────────────────────────────────────────────────────
-
-type TabStatus = 'error' | 'warn' | 'active' | 'idle'
-
-function tabStatus(lines: ParsedLine[]): TabStatus {
-  if (lines.some(l => l.level === 'ERROR')) return 'error'
-  if (lines.some(l => l.level === 'WARN'))  return 'warn'
-  if (lines.length > 0)                     return 'active'
-  return 'idle'
-}
-
-const STATUS_DOT: Record<TabStatus, string> = {
-  error:  'bg-red-500',
-  warn:   'bg-amber-400',
-  active: 'bg-emerald-400',
-  idle:   'bg-gray-300',
-}
 
 // ─── Log row renderers ───────────────────────────────────────────────────────
 
@@ -422,7 +396,6 @@ export default function LogViewer() {
   // Tab + filter state
   const [activeTab, setActiveTabRaw]  = useState<ActiveTab>(searchParams.get('component') ?? 'spin')
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL')
-  const [spinStream, setSpinStream]   = useState<StreamFilter>('all')
   const [search, setSearch]           = useState(searchParams.get('search') ?? '')
   const [autoScroll, setAutoScroll]   = useState(true)
 
@@ -489,11 +462,10 @@ export default function LogViewer() {
   // Lines for the Spin tab (process stdout/stderr + system)
   const spinLines = useMemo(() => allLines.filter(l => {
     if (l.raw.stream === 'component') return false
-    if (spinStream !== 'all' && l.raw.stream !== spinStream) return false
     if (!levelOk(l) || !searchOk(l) || !timeOk(l)) return false
     return true
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [allLines, spinStream, levelFilter, search, fromMs, toMs])
+  }), [allLines, levelFilter, search, fromMs, toMs])
 
   // Lines for the active component tab
   const compLines = useMemo(() => {
@@ -523,19 +495,6 @@ export default function LogViewer() {
     setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
   }
 
-  // Tab status indicators
-  const spinStatus = useMemo(() => tabStatus(
-    allLines.filter(l => l.raw.stream !== 'component')
-  ), [allLines])
-
-  const compStatuses = useMemo(() => {
-    const map: Record<string, TabStatus> = {}
-    for (const id of compIds) {
-      map[id] = tabStatus(allLines.filter(l => l.raw.stream === 'component' && l.raw.component === id))
-    }
-    return map
-  }, [allLines, compIds])
-
   const totalErrors = useMemo(() =>
     allLines.filter(l => l.raw.stream !== 'component' && l.level === 'ERROR').length
   , [allLines])
@@ -564,77 +523,82 @@ export default function LogViewer() {
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
-              className="input text-xs py-1 pl-8 h-8 w-48"
-              placeholder="Search…"
+              className="input text-xs py-1 pl-8 h-8 w-56"
+              placeholder="Search logs…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
           {/* Clear */}
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={clear} title="Clear log">
+          <button className="btn-ghost btn-icon" onClick={clear} title="Clear log">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-          {/* Auto-scroll */}
+          {/* Live / Pause toggle */}
           {!fromMs && !toMs && (
-            <button
-              className={`btn text-xs h-8 px-2.5 ${autoScroll ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setAutoScroll(v => !v)}
-              title="Auto-scroll to bottom"
-            >
-              <ArrowDown className="w-3.5 h-3.5" />
-            </button>
+            <div className="tab-group">
+              <button
+                onClick={() => setAutoScroll(true)}
+                className={`tab ${autoScroll ? 'tab-active' : ''}`}
+                title="Live updates"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className={`absolute inline-flex h-full w-full rounded-full bg-green-400 ${autoScroll ? 'animate-ping opacity-75' : 'opacity-0'}`} />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
+                Live
+              </button>
+              <button
+                onClick={() => setAutoScroll(false)}
+                className={`tab ${!autoScroll ? 'tab-active' : ''}`}
+                title="Pause live updates"
+              >
+                <Pause className="w-3.5 h-3.5" />
+                Paused
+              </button>
+            </div>
           )}
         </div>
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto scrollbar-hide h-[37px]">
+      <div className="flex items-center gap-2 px-4 py-2 shrink-0 overflow-x-auto scrollbar-hide">
+        <div className="tab-group">
+          {/* Spin tab */}
+          <button
+            onClick={() => setActiveTab('spin')}
+            className={`tab ${activeTab === 'spin' ? 'tab-active' : ''}`}
+          >
+            <Settings2 className="w-3.5 h-3.5 shrink-0" />
+            Spin
+            {totalErrors > 0 && (
+              <span className="badge-sm badge-red font-semibold">{totalErrors}</span>
+            )}
+          </button>
 
-        {/* Spin tab */}
-        <button
-          onClick={() => setActiveTab('spin')}
-          className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors mr-1
-            ${activeTab === 'spin'
-              ? 'border-b-2 border-spin-oxfordblue text-spin-oxfordblue bg-white -mb-px'
-              : 'text-gray-500 hover:text-gray-700'
-            }`}
-        >
-          <Settings2 className="w-3.5 h-3.5 shrink-0" />
-          Spin
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[spinStatus]}`} />
-          {totalErrors > 0 && (
-            <span className="px-1 py-px text-[10px] rounded bg-red-100 text-red-700 font-semibold">{totalErrors}</span>
-          )}
-        </button>
-
-        {/* Component tabs */}
-        {compIds.map((id) => {
-          const pal    = componentTw(id)
-          const status = compStatuses[id] ?? 'idle'
-          const errs   = compErrors(id)
-          const isActive = activeTab === id
-          return (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors
-                ${isActive
-                  ? `bg-white -mb-px ${pal.active} ${pal.text}`
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              <Cpu className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono">{id}</span>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status === 'idle' ? pal.dot + ' opacity-30' : STATUS_DOT[status]}`} />
-              {errs > 0 && (
-                <span className="px-1 py-px text-[10px] rounded bg-red-100 text-red-700 font-semibold">{errs}</span>
-              )}
-            </button>
-          )
-        })}
+          {/* Component tabs */}
+          {compIds.map((id) => {
+            const pal  = componentTw(id)
+            const errs = compErrors(id)
+            const isActive = activeTab === id
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`tab ${isActive ? 'tab-active' : ''}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pal.dot}`} />
+                <Cpu className="w-3.5 h-3.5 shrink-0" />
+                <span className="font-mono">{id}</span>
+                {errs > 0 && (
+                  <span className="badge-sm badge-red font-semibold">{errs}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
 
         {/* Spacer + filtered count */}
-        <div className="ml-auto flex items-center pl-4 pr-1 text-xs text-gray-400 tabular-nums whitespace-nowrap">
+        <div className="ml-auto flex items-center text-xs text-gray-400 tabular-nums whitespace-nowrap">
           {activeLines.length} / {allLines.length}
         </div>
       </div>
@@ -642,28 +606,16 @@ export default function LogViewer() {
       {/* ── Secondary toolbar (filters) ─────────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 bg-white shrink-0 flex-wrap">
         {/* Level filter */}
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+        <div className="tab-group">
           {LEVEL_OPTS.map(l => (
             <button
               key={l}
               onClick={() => setLevelFilter(l)}
-              className={`px-2 py-1 transition-colors ${levelFilter === l ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              className={`tab ${levelFilter === l ? 'tab-active' : ''}`}
             >{l === 'ALL' ? 'All' : l}</button>
           ))}
         </div>
 
-        {/* Spin tab: stream filter (stdout/stderr/system — for process output) */}
-        {activeTab === 'spin' && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
-            {STREAM_OPTS.map(s => (
-              <button
-                key={s.value}
-                onClick={() => setSpinStream(s.value)}
-                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-              >{s.label}</button>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* ── Time-range filter banner (Spin tab only) ─────────────────────────── */}

@@ -219,7 +219,7 @@ export default function Waterfall({
           <div className="ml-auto flex items-center gap-4">
             {components.map(c => (
               <div key={c} className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colorMap.get(c!) }} />
+                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: colorMap.get(c!) }} />
                 <span className="text-gray-600">{c}</span>
               </div>
             ))}
@@ -266,8 +266,8 @@ export default function Waterfall({
             onClick={() => onSelectSpan(isSelected ? null : node.span.spanId)}
             className={[
               'flex items-center border-b border-gray-100 cursor-pointer transition-colors',
-              isActiveMatch ? 'bg-yellow-100 ring-1 ring-inset ring-yellow-400'
-              : isMatch ? 'bg-yellow-50'
+              isActiveMatch ? 'bg-amber-100 ring-1 ring-inset ring-amber-300'
+              : isMatch ? 'bg-amber-50'
               : isSelected ? 'bg-blue-50'
               : isError ? 'bg-red-50/40 hover:bg-red-50/70'
               : 'hover:bg-gray-50',

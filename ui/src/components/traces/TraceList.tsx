@@ -68,8 +68,8 @@ export default function TraceList({
           >
             <td className="px-4 py-2.5 font-mono text-gray-500 tabular-nums">
               <div className="flex items-center gap-1.5">
-                {isCompareA && <span className="badge badge-purple text-[10px] px-1 py-0">A</span>}
-                {isCompareB && <span className="badge badge-purple text-[10px] px-1 py-0">B</span>}
+                {isCompareA && <span className="badge badge-purple badge-sm rounded-full">A</span>}
+                {isCompareB && <span className="badge badge-purple badge-sm rounded-full">B</span>}
                 {fmtTime(t.startMs)}
               </div>
             </td>
@@ -77,7 +77,7 @@ export default function TraceList({
               <div className="flex items-center gap-2 flex-wrap">
                 {t.hasErrors && <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
                 {t.httpMethod && (
-                  <span className="badge badge-gray font-mono text-xs px-1.5 py-0.5">{t.httpMethod}</span>
+                  <span className="badge badge-gray badge-sm rounded-full font-mono">{t.httpMethod}</span>
                 )}
                 <span className="font-semibold text-gray-900">{t.rootName}</span>
                 {t.component && (() => {
@@ -88,15 +88,15 @@ export default function TraceList({
                       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs font-mono border"
                       style={{ borderColor: color, color, backgroundColor: `${color}18` }}
                     >
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
                       {isDownstream ? <>via {t.component}</> : t.component}
                     </span>
                   )
                 })()}
                 {t.httpStatus && (
-                  <span className={`badge text-xs px-1.5 py-0.5 font-mono ${
+                  <span className={`badge badge-sm rounded-full font-mono ${
                     Number(t.httpStatus) >= 500 ? 'badge-red' :
-                    Number(t.httpStatus) >= 400 ? 'bg-amber-100 text-amber-800 border border-amber-200' :
+                    Number(t.httpStatus) >= 400 ? 'badge-amber' :
                     'badge-gray'
                   }`}>{t.httpStatus}</span>
                 )}

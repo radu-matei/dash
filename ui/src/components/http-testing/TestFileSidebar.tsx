@@ -64,7 +64,7 @@ export default function TestFileSidebar({
             <FlaskConical className="w-8 h-8 text-gray-300 mx-auto mb-2" />
             <p className="text-xs text-gray-500 mb-3">No test files found</p>
             {canEdit && (
-              <button onClick={onNewTest} className="btn-primary text-xs h-7 px-3">
+              <button onClick={onNewTest} className="btn-accent text-xs h-7 px-3">
                 <Plus className="w-3 h-3" /> Create one
               </button>
             )}

@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  Activity, AlertCircle, ArrowRight, BarChart2, Clock, RefreshCw, Zap,
+  Activity, AlertCircle, ArrowRight, BarChart2, Clock, Pause, Zap,
 } from 'lucide-react'
 import {
   getTraces, getOtelMetrics,
@@ -82,10 +82,10 @@ function StatCard({
 }) {
   return (
     <div
-      className={`card p-5 flex items-start gap-4 ${accent ? 'border-spin-seagreen/40' : warn ? 'border-amber-300' : ''} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''}`}
+      className={`card rounded-14 p-5 flex items-start gap-4 ${accent ? 'card-accent' : warn ? 'border-amber-300' : ''} ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow duration-200' : ''}`}
       onClick={onClick}
     >
-      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : warn ? 'bg-amber-50' : 'bg-gray-100'}`}>
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${accent ? 'bg-spin-seagreen/15' : warn ? 'bg-amber-50' : 'bg-gray-100'}`}>
         <Icon className={`w-5 h-5 ${accent ? 'text-spin-midgreen' : warn ? 'text-amber-600' : 'text-gray-500'}`} />
       </div>
       <div className="min-w-0">
@@ -107,7 +107,7 @@ function StatCard({
 function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; title: string; sub?: string }) {
   return (
     <div className="flex items-center gap-2 mb-3">
-      <div className="w-7 h-7 rounded-lg bg-spin-oxfordblue/10 flex items-center justify-center shrink-0">
+      <div className="w-7 h-7 rounded-full bg-spin-oxfordblue/10 flex items-center justify-center shrink-0">
         <Icon className="w-4 h-4 text-spin-oxfordblue" />
       </div>
       <div>
@@ -165,7 +165,7 @@ function OtelSection({ series }: { series: Record<string, MetricSeries> }) {
 
   if (!entries.length) {
     return (
-      <div className="card p-6 flex flex-col items-center justify-center h-36 text-gray-400 gap-2">
+      <div className="card rounded-14 p-6 flex flex-col items-center justify-center h-36 text-gray-400 gap-2">
         <BarChart2 className="w-8 h-8 opacity-25" />
         <p className="text-sm">No OTel metrics received yet.</p>
         <p className="text-xs">Spin exports <code>spin.request_count</code>, <code>spin.component_cpu_time</code>, <code>spin.component_memory_used</code>, and more.</p>
@@ -267,7 +267,7 @@ function MetricCard({ series, activeComps, colorMap }: {
   const getColor = (v: string) => colorMap.get(v) ?? componentHex(v)
 
   return (
-    <div className="card p-5">
+    <div className="card rounded-14 p-5">
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div>
@@ -280,21 +280,19 @@ function MetricCard({ series, activeComps, colorMap }: {
 
       {/* Group-by dimension selector */}
       {attrKeys.length > 1 && (
-        <div className="flex items-center gap-1 mb-3 flex-wrap">
-          <span className="text-[10px] text-gray-400 uppercase tracking-wider mr-1">by</span>
-          {attrKeys.map(k => (
-            <button
-              key={k}
-              onClick={() => setGroupBy(k)}
-              className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
-                k === activeGroupBy
-                  ? 'bg-gray-800 text-white'
-                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
-            >
-              {k}
-            </button>
-          ))}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <span className="text-[10px] text-gray-400 uppercase tracking-wider">by</span>
+          <div className="tab-group">
+            {attrKeys.map(k => (
+              <button
+                key={k}
+                onClick={() => setGroupBy(k)}
+                className={`tab text-xs font-mono ${k === activeGroupBy ? 'tab-active' : ''}`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -369,7 +367,7 @@ function MetricCard({ series, activeComps, colorMap }: {
               const isActive = !isCompDim || activeComps.has(c.name)
               const label = c.name === '_total' ? (series.name.split('.').pop() ?? series.name) : c.name
               return (
-                <div key={c.name} className={`grid grid-cols-subgrid col-span-3 items-center gap-2 text-xs transition-opacity ${isActive ? '' : 'opacity-30'}`}>
+                <div key={c.name} className={`grid grid-cols-subgrid col-span-3 items-center gap-2 text-xs transition-opacity duration-150 ${isActive ? '' : 'opacity-30'}`}>
                   <span className="truncate text-gray-600 font-mono max-w-56" title={c.name}>
                     {label}
                   </span>
@@ -472,7 +470,7 @@ function TraceSection({ spans }: { spans: Span[] }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* Timeline */}
         {data.timeline.length > 0 && (
-          <div className="card p-5">
+          <div className="card rounded-14 p-5">
             <p className="text-xs font-semibold text-gray-600 mb-3">Requests per minute</p>
             <ResponsiveContainer width="100%" height={160}>
               <AreaChart data={data.timeline} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
@@ -496,7 +494,7 @@ function TraceSection({ spans }: { spans: Span[] }) {
         )}
 
         {/* Latency histogram */}
-        <div className="card p-5">
+        <div className="card rounded-14 p-5">
           <p className="text-xs font-semibold text-gray-600 mb-3">Latency distribution</p>
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={data.hist} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
@@ -524,7 +522,10 @@ export default function MetricsPage() {
   const [spans, setSpans] = useState<Span[]>([])
   const [otelMetrics, setOtelMetrics] = useState<Record<string, MetricSeries>>({})
   const [loading, setLoading] = useState(true)
+  const [paused, setPaused] = useState(false)
 
+  const pausedRef = useRef(paused)
+  pausedRef.current = paused
   const wakeRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
@@ -535,16 +536,18 @@ export default function MetricsPage() {
 
     const run = async () => {
       while (active) {
-        const sig = ctrl.signal
-        const [s, o] = await Promise.allSettled([getTraces(sig), getOtelMetrics(sig)])
-        if (!active || sig.aborted) break
-        if (s.status === 'fulfilled') setSpans(s.value ?? [])
-        if (o.status === 'fulfilled') setOtelMetrics(o.value ?? {})
-        setLoading(false)
+        if (!pausedRef.current) {
+          const sig = ctrl.signal
+          const [s, o] = await Promise.allSettled([getTraces(sig), getOtelMetrics(sig)])
+          if (!active || sig.aborted) break
+          if (s.status === 'fulfilled') setSpans(s.value ?? [])
+          if (o.status === 'fulfilled') setOtelMetrics(o.value ?? {})
+          setLoading(false)
+        }
         await new Promise<void>(res => {
           const t = setTimeout(res, 3000)
           wakeRef.current = () => { clearTimeout(t); res() }
-          sig.addEventListener('abort', () => { clearTimeout(t); res() })
+          ctrl.signal.addEventListener('abort', () => { clearTimeout(t); res() })
         })
         wakeRef.current = null
       }
@@ -556,7 +559,7 @@ export default function MetricsPage() {
 
   if (loading) return (
     <div className="p-6 space-y-4">
-      {[1,2,3].map(i => <div key={i} className="card p-4 h-24 skeleton" />)}
+      {[1,2,3].map(i => <div key={i} className="card rounded-14 p-4 h-24 skeleton" />)}
     </div>
   )
 
@@ -566,10 +569,27 @@ export default function MetricsPage() {
       <div className="page-header bg-white sticky top-0 z-10 shrink-0">
         <h1 className="page-title">Metrics</h1>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">auto-refreshes every 3s</span>
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={() => wakeRef.current?.()}>
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
+          <div className="tab-group">
+            <button
+              onClick={() => setPaused(false)}
+              className={`tab ${!paused ? 'tab-active' : ''}`}
+              title="Live updates"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className={`absolute inline-flex h-full w-full rounded-full bg-green-400 ${!paused ? 'animate-ping opacity-75' : 'opacity-0'}`} />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              </span>
+              Live
+            </button>
+            <button
+              onClick={() => setPaused(true)}
+              className={`tab ${paused ? 'tab-active' : ''}`}
+              title="Pause live updates"
+            >
+              <Pause className="w-3.5 h-3.5" />
+              Paused
+            </button>
+          </div>
         </div>
       </div>
 

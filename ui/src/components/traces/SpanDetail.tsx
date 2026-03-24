@@ -43,11 +43,11 @@ export default function SpanDetail({ node, colorMap, effectiveColor, effectiveCo
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-blue-50/60 border-b border-blue-100">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: isError ? '#dc2626' : color }} />
+          <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: isError ? '#dc2626' : color }} />
           <span className="font-semibold text-gray-900 font-mono truncate">{span.name}</span>
-          {isError && <span className="badge badge-red shrink-0">ERROR</span>}
+          {isError && <span className="badge badge-red badge-sm rounded-full shrink-0">ERROR</span>}
           {httpStatus && (
-            <span className={`badge shrink-0 font-mono ${isStatusError ? 'badge-red' : 'badge-gray'}`}>
+            <span className={`badge badge-sm rounded-full shrink-0 font-mono ${isStatusError ? 'badge-red' : 'badge-gray'}`}>
               HTTP {httpStatus}
             </span>
           )}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertCircle, ArrowUpDown, Copy, Check, GitCompareArrows,
-  ExternalLink, FlaskConical, Pause, Play, RefreshCw, Search, X,
+  ExternalLink, FlaskConical, Pause, Search, X,
 } from 'lucide-react'
 import { getApp, type AppInfo } from '../../api/client'
 import ComponentTabs from '../ComponentTabs'
@@ -42,7 +42,7 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
 export default function TraceViewer() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { allSpans, error, paused, setPaused, refresh } = useTracePolling()
+  const { allSpans, error, paused, setPaused } = useTracePolling()
   const [appInfo, setAppInfo]     = useState<AppInfo | null>(null)
   const [selected, setSelected]   = useState<string | null>(null)
   const [filter, setFilter]       = useState('')
@@ -69,6 +69,7 @@ export default function TraceViewer() {
   const [activeTab, setActiveTab] = useState<'waterfall' | 'logs'>('waterfall')
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null)
   const [listHeight, setListHeight] = useState(192) // px – resizable trace-list height
+  const containerRef = useRef<HTMLDivElement>(null)
   const isDragging = useRef(false)
   const dragStartY = useRef(0)
   const dragStartH = useRef(0)
@@ -86,11 +87,13 @@ export default function TraceViewer() {
   }, [selected, setPaused])
 
   // Drag-to-resize the trace list / detail-panel split.
+  // Min 0 so the detail panel can take the full height.
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!isDragging.current) return
       const delta = e.clientY - dragStartY.current
-      setListHeight(Math.max(72, Math.min(600, dragStartH.current + delta)))
+      const maxH = (containerRef.current?.clientHeight ?? 800) - 6
+      setListHeight(Math.max(0, Math.min(maxH, dragStartH.current + delta)))
     }
     const onUp = () => { isDragging.current = false; document.body.style.cursor = '' }
     window.addEventListener('mousemove', onMove)
@@ -216,41 +219,41 @@ export default function TraceViewer() {
           <h1 className="page-title">Traces</h1>
           {traces.length > 0 && (
             <>
-              <span className="badge badge-gray">{traces.length}</span>
-              {errorCount > 0 && <span className="badge badge-red">{errorCount} with errors</span>}
+              <span className="badge badge-gray badge-sm rounded-full">{traces.length}</span>
+              {errorCount > 0 && <span className="badge badge-red badge-sm rounded-full">{errorCount} with errors</span>}
               <DurationChart traces={traces} />
             </>
           )}
         </div>
         <div className="flex items-center gap-2">
-          {/* Sort */}
-          <button
-            onClick={() => setSortBy(s => s === 'recent' ? 'longest' : 'recent')}
-            className={`btn text-xs h-8 px-2.5 ${sortBy === 'longest' ? 'bg-blue-100 text-blue-700 border border-blue-200 hover:bg-blue-200' : 'btn-secondary'}`}
-          >
-            <ArrowUpDown className="w-3.5 h-3.5" />
-            {sortBy === 'longest' ? 'Longest first' : 'Most recent'}
-          </button>
+          {/* Sort / Errors / Compare — segment control */}
+          <div className="tab-group">
+            <button
+              onClick={() => setSortBy(s => s === 'recent' ? 'longest' : 'recent')}
+              className={`tab ${sortBy === 'longest' ? 'tab-active' : ''}`}
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              {sortBy === 'longest' ? 'Longest first' : 'Most recent'}
+            </button>
 
-          {/* Errors only */}
-          <button
-            onClick={() => setErrorsOnly(v => !v)}
-            className={`btn text-xs h-8 px-2.5 ${errorsOnly ? 'bg-red-100 text-red-700 border border-red-200 hover:bg-red-200' : 'btn-secondary'}`}
-          >
-            <AlertCircle className="w-3.5 h-3.5" />
-            Errors only
-            {errorsOnly && <span className="ml-1 font-semibold">✓</span>}
-          </button>
+            <button
+              onClick={() => setErrorsOnly(v => !v)}
+              className={`tab ${errorsOnly ? 'tab-active' : ''}`}
+            >
+              <AlertCircle className="w-3.5 h-3.5" />
+              Errors only
+              {errorsOnly && <span className="ml-1 font-semibold">✓</span>}
+            </button>
 
-          {/* Compare mode */}
-          <button
-            onClick={() => compareMode ? exitCompareMode() : (setCompareMode(true), setSelected(null))}
-            className={`btn text-xs h-8 px-2.5 ${compareMode ? 'bg-purple-100 text-purple-700 border border-purple-200 hover:bg-purple-200' : 'btn-secondary'}`}
-            title={compareMode ? 'Exit compare mode' : 'Compare two traces'}
-          >
-            <GitCompareArrows className="w-3.5 h-3.5" />
-            {compareMode ? 'Comparing' : 'Compare'}
-          </button>
+            <button
+              onClick={() => compareMode ? exitCompareMode() : (setCompareMode(true), setSelected(null))}
+              className={`tab ${compareMode ? 'tab-active' : ''}`}
+              title={compareMode ? 'Exit compare mode' : 'Compare two traces'}
+            >
+              <GitCompareArrows className="w-3.5 h-3.5" />
+              {compareMode ? 'Comparing' : 'Compare'}
+            </button>
+          </div>
 
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -263,30 +266,27 @@ export default function TraceViewer() {
           </div>
 
           {/* Live / Pause toggle */}
-          <button
-            onClick={() => setPaused(p => !p)}
-            className={`btn text-xs h-8 px-2.5 ${paused ? 'bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-200' : 'btn-secondary'}`}
-            title={paused ? 'Resume live updates' : 'Pause live updates'}
-          >
-            {paused ? (
-              <>
-                <Play className="w-3.5 h-3.5" />
-                Paused
-              </>
-            ) : (
-              <>
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                </span>
-                <Pause className="w-3.5 h-3.5" />
-              </>
-            )}
-          </button>
-
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={refresh} title="Refresh now">
-            <RefreshCw className="w-3.5 h-3.5" />
-          </button>
+          <div className="tab-group">
+            <button
+              onClick={() => setPaused(false)}
+              className={`tab ${!paused ? 'tab-active' : ''}`}
+              title="Live updates"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className={`absolute inline-flex h-full w-full rounded-full bg-green-400 ${!paused ? 'animate-ping opacity-75' : 'opacity-0'}`} />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              </span>
+              Live
+            </button>
+            <button
+              onClick={() => setPaused(true)}
+              className={`tab ${paused ? 'tab-active' : ''}`}
+              title="Pause live updates"
+            >
+              <Pause className="w-3.5 h-3.5" />
+              Paused
+            </button>
+          </div>
         </div>
       </div>
 
@@ -351,7 +351,7 @@ export default function TraceViewer() {
           </p>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+        <div ref={containerRef} className="flex-1 flex flex-col overflow-hidden min-h-0">
 
           {/* ── Trace list ──────────────────────────────────────── */}
           <div
@@ -372,7 +372,7 @@ export default function TraceViewer() {
           {/* ── Resize handle ────────────────────────────────────── */}
           {(selectedTrace || (compareTraceA && compareTraceB)) && (
             <div
-              className="h-1.5 shrink-0 cursor-row-resize bg-gray-100 hover:bg-blue-200 active:bg-blue-300 transition-colors flex items-center justify-center group"
+              className="h-1.5 shrink-0 cursor-row-resize bg-gray-200 hover:bg-spin-oxfordblue/20 active:bg-spin-oxfordblue/30 transition-colors duration-150 flex items-center justify-center group"
               onMouseDown={e => {
                 isDragging.current = true
                 dragStartY.current = e.clientY
@@ -381,7 +381,7 @@ export default function TraceViewer() {
                 e.preventDefault()
               }}
             >
-              <div className="w-10 h-0.5 rounded-full bg-gray-300 group-hover:bg-blue-400 transition-colors" />
+              <div className="w-10 h-0.5 rounded-full bg-gray-300 group-hover:bg-spin-oxfordblue/40 transition-colors duration-150" />
             </div>
           )}
 
@@ -408,7 +408,7 @@ export default function TraceViewer() {
                 <div className="flex items-center gap-3 min-w-0">
                   <Activity className="w-4 h-4 text-blue-600 shrink-0" />
                   <span className="text-sm font-semibold text-gray-900 truncate">{selectedTrace.rootName}</span>
-                  {selectedTrace.hasErrors && <span className="badge badge-red shrink-0">ERROR</span>}
+                  {selectedTrace.hasErrors && <span className="badge badge-red badge-sm rounded-full shrink-0">ERROR</span>}
                   <span className="text-xs text-gray-400 shrink-0">{selectedTrace.spanCount} spans</span>
                   <div className="hidden lg:flex items-center gap-1 shrink-0">
                     <code className="text-xs text-gray-400 font-mono">{selectedTrace.traceId.slice(0, 16)}…</code>
@@ -416,12 +416,12 @@ export default function TraceViewer() {
                   </div>
 
                   {/* Tabs */}
-                  <div className="flex border border-gray-200 rounded-lg overflow-hidden text-xs font-medium ml-2">
+                  <div className="tab-group ml-2">
                     {([['waterfall', 'Waterfall'], ['logs', 'Related Logs']] as const).map(([tab, label]) => (
                       <button
                         key={tab}
                         onClick={() => setActiveTab(tab)}
-                        className={`px-3 py-1.5 transition-colors ${activeTab === tab ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        className={`tab ${activeTab === tab ? 'tab-active' : ''}`}
                       >
                         {label}
                       </button>

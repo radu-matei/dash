@@ -45,8 +45,8 @@ export default function VarInspector() {
           {vars.length > 0 && (
             <>
               <span className="badge badge-blue">{spinTomlCount} from spin.toml</span>
-              {envCount > 0 && <span className="badge badge-yellow">{envCount} from .env</span>}
-              {spinVarCount > 0 && <span className="badge badge-orange">{spinVarCount} from env</span>}
+              {envCount > 0 && <span className="badge badge-amber">{envCount} from .env</span>}
+              {spinVarCount > 0 && <span className="badge badge-amber">{spinVarCount} from env</span>}
               {cliCount > 0 && <span className="badge badge-green">{cliCount} from --variable</span>}
               {secretCount > 0 && <span className="badge badge-gray">{secretCount} secret{secretCount !== 1 ? 's' : ''}</span>}
             </>
@@ -99,8 +99,8 @@ export default function VarInspector() {
                   <tr key={i}>
                     <td>
                       <span className={
-                        v.source === '.env'           ? 'badge badge-yellow' :
-                        v.source === 'SPIN_VARIABLE'  ? 'badge badge-orange' :
+                        v.source === '.env'           ? 'badge badge-amber' :
+                        v.source === 'SPIN_VARIABLE'  ? 'badge badge-amber' :
                         v.source === '--variable'     ? 'badge badge-green'  :
                                                         'badge badge-blue'
                       }>
@@ -150,8 +150,8 @@ export default function VarInspector() {
             <p className="text-xs font-semibold text-gray-700 mb-2">Variable resolution order (highest wins)</p>
             <ol className="list-decimal list-inside space-y-1 text-xs text-gray-600">
               <li><span className="badge badge-green mr-1">--variable</span> CLI flag</li>
-              <li><span className="badge badge-orange mr-1">env</span> <code className="text-xs">SPIN_VARIABLE_*</code> environment variables</li>
-              <li><span className="badge badge-yellow mr-1">.env</span> file</li>
+              <li><span className="badge badge-amber mr-1">env</span> <code className="text-xs">SPIN_VARIABLE_*</code> environment variables</li>
+              <li><span className="badge badge-amber mr-1">.env</span> file</li>
               <li><span className="badge badge-blue mr-1">spin.toml</span> defaults and secret flags</li>
             </ol>
           </div>

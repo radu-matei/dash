@@ -169,7 +169,7 @@ export default function KVExplorer() {
               to a component in your spin.toml to start using the KV Explorer.
             </p>
           </div>
-          <pre className="text-left text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg p-4 text-gray-500 max-w-sm w-full">
+          <pre className="text-left text-xs font-mono bg-gray-50 border border-gray-200 rounded-14 p-5 text-gray-500 max-w-sm w-full">
 {`[component.my-app]
 source = "app.wasm"
 key_value_stores = ["default"]`}
@@ -233,7 +233,7 @@ key_value_stores = ["default"]`}
         <div className="flex items-center gap-2 px-6 py-2 bg-red-50 border-b border-red-100 text-red-600 text-sm">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span className="flex-1 truncate">{error}</span>
-          <button onClick={() => setError(null)} className="text-red-400 hover:text-red-600">
+          <button onClick={() => setError(null)} className="btn-ghost btn-icon text-red-400 hover:text-red-600">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -247,21 +247,19 @@ key_value_stores = ["default"]`}
         panel={
           <>
             {/* Store tabs */}
-            <div className="flex items-center gap-1 px-3 py-2 border-b border-gray-100 overflow-x-auto shrink-0">
-              {stores.map(s => (
-                <button
-                  key={s}
-                  onClick={() => setActiveStore(s)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-lg whitespace-nowrap transition-colors ${
-                    s === activeStore
-                      ? 'bg-spin-seagreen/10 text-spin-seagreen'
-                      : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
-                  }`}
-                >
-                  <Database className="w-3 h-3 inline-block mr-1 -mt-0.5" />
-                  {s}
-                </button>
-              ))}
+            <div className="flex items-center px-3 py-2 border-b border-gray-100 overflow-x-auto shrink-0">
+              <div className="tab-group">
+                {stores.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setActiveStore(s)}
+                    className={`tab ${s === activeStore ? 'tab-active' : ''}`}
+                  >
+                    <Database className="w-3 h-3" />
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Search + Add */}
@@ -273,12 +271,12 @@ key_value_stores = ["default"]`}
                   placeholder="Filter keys…"
                   value={filter}
                   onChange={e => setFilter(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-spin-seagreen/40 focus:border-spin-seagreen/40"
+                  className="input w-full pl-8 text-xs"
                 />
               </div>
               <button
                 onClick={openAddForm}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-white bg-spin-seagreen hover:bg-spin-seagreen/90 rounded-lg transition-colors"
+                className="btn-accent btn-sm"
                 title="Add key"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -304,7 +302,7 @@ key_value_stores = ["default"]`}
                   onClick={() => selectKey(k)}
                   className={`w-full text-left px-4 py-2.5 text-sm border-b border-gray-50 transition-colors ${
                     k === selectedKey
-                      ? 'bg-spin-seagreen/5 text-spin-seagreen font-medium'
+                      ? 'bg-spin-oxfordblue/5 text-spin-oxfordblue font-medium'
                       : 'text-gray-700 hover:bg-gray-50'
                   }`}
                 >
@@ -340,7 +338,7 @@ key_value_stores = ["default"]`}
                 onChange={e => setFormKey(e.target.value)}
                 disabled={formEditing}
                 placeholder="my-key"
-                className="mb-4 px-3 py-2 text-sm font-mono bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-spin-seagreen/40 disabled:opacity-60"
+                className="input-mono mb-4 disabled:opacity-60"
               />
 
               <label className="text-xs font-medium text-gray-500 mb-1">Value</label>
@@ -349,20 +347,20 @@ key_value_stores = ["default"]`}
                 onChange={e => setFormValue(e.target.value)}
                 placeholder="value"
                 rows={12}
-                className="mb-4 px-3 py-2 text-sm font-mono bg-white border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-spin-seagreen/40 resize-y"
+                className="input-mono mb-4 resize-y"
               />
 
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleSave}
                   disabled={saving || !formKey}
-                  className="px-4 py-2 text-sm font-medium text-white bg-spin-seagreen hover:bg-spin-seagreen/90 rounded-lg transition-colors disabled:opacity-50"
+                  className="btn-primary"
                 >
                   {saving ? 'Saving…' : formEditing ? 'Update' : 'Create'}
                 </button>
                 <button
                   onClick={() => setShowForm(false)}
-                  className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors"
+                  className="btn-secondary"
                 >
                   Cancel
                 </button>
@@ -379,24 +377,16 @@ key_value_stores = ["default"]`}
                     themselves base64 in the store (the transport layer encoding
                     is always stripped automatically). */}
                 {selectedValue !== null && looksLikeBase64(decodeBase64Value(selectedValue)) && (
-                  <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+                  <div className="tab-group">
                     <button
                       onClick={() => setDecodeBase64(false)}
-                      className={`px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                        !decodeBase64
-                          ? 'bg-white text-gray-700 shadow-sm'
-                          : 'text-gray-400 hover:text-gray-600'
-                      }`}
+                      className={`tab ${!decodeBase64 ? 'tab-active' : ''}`}
                     >
                       Raw
                     </button>
                     <button
                       onClick={() => setDecodeBase64(true)}
-                      className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium rounded-md transition-colors ${
-                        decodeBase64
-                          ? 'bg-white text-gray-700 shadow-sm'
-                          : 'text-gray-400 hover:text-gray-600'
-                      }`}
+                      className={`tab ${decodeBase64 ? 'tab-active' : ''}`}
                     >
                       <FileCode2 className="w-3 h-3" />
                       Decode Base64
@@ -406,13 +396,13 @@ key_value_stores = ["default"]`}
 
                 <button
                   onClick={openEditForm}
-                  className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                  className="btn-ghost btn-sm"
                 >
                   Edit
                 </button>
                 <button
                   onClick={handleDelete}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+                  className="btn-danger btn-sm"
                 >
                   <Trash2 className="w-3 h-3" />
                   Delete
@@ -475,14 +465,14 @@ function ValueDisplay({ value }: { value: string }) {
   if (json !== undefined) {
     const pretty = JSON.stringify(json, null, 2)
     return (
-      <pre className="text-sm font-mono whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-4 leading-relaxed">
+      <pre className="text-sm font-mono whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-14 p-5 leading-relaxed">
         {highlightJSON(pretty)}
       </pre>
     )
   }
 
   return (
-    <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-lg p-4">
+    <pre className="text-sm font-mono text-gray-700 whitespace-pre-wrap break-all bg-white border border-gray-200 rounded-14 p-5">
       {value}
     </pre>
   )

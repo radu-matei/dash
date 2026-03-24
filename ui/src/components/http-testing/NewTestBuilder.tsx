@@ -168,7 +168,7 @@ function RequestCard({
               <button
                 key={r.route}
                 onClick={() => onChange({ url: `{{base_url}}${r.route.replace(/\/\.\.\.$/g, '/')}` })}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-700 transition-colors"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900 transition-colors"
                 title={`Component: ${r.component}`}
               >
                 {r.route}
@@ -178,24 +178,20 @@ function RequestCard({
           </div>
         )}
 
-        <div className="flex flex-wrap gap-1.5 pt-1">
+        <div className="tab-group">
           <button
             onClick={() => {
               setShowHeaders(v => !v)
               if (!showHeaders && entry.headers.length === 0) onChange({ headers: [{ key: '', value: '' }] })
             }}
-            className={`text-xs px-2 py-1 rounded transition-colors ${
-              showHeaders ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
+            className={`tab ${showHeaders ? 'tab-active' : ''}`}
           >
             Headers{entry.headers.length > 0 && ` (${entry.headers.length})`}
           </button>
           {needsBody && (
             <button
               onClick={() => setShowBody(v => !v)}
-              className={`text-xs px-2 py-1 rounded transition-colors ${
-                showBody ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-              }`}
+              className={`tab ${showBody ? 'tab-active' : ''}`}
             >
               Body
             </button>
@@ -206,9 +202,7 @@ function RequestCard({
               if (!showAsserts && entry.assertions.length === 0)
                 onChange({ assertions: [{ type: 'jsonpath', selector: '', predicate: '==', value: '' }] })
             }}
-            className={`text-xs px-2 py-1 rounded transition-colors ${
-              showAsserts ? 'bg-spin-seagreen/15 text-spin-oxfordblue' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-            }`}
+            className={`tab ${showAsserts ? 'tab-active' : ''}`}
           >
             Assertions{entry.assertions.length > 0 && ` (${entry.assertions.length})`}
           </button>
@@ -226,7 +220,7 @@ function RequestCard({
             ))}
             <button
               onClick={() => onChange({ headers: [...entry.headers, { key: '', value: '' }] })}
-              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 py-0.5"
+              className="btn-ghost text-xs flex items-center gap-1 py-0.5"
             >
               <Plus className="w-3 h-3" /> Add header
             </button>
@@ -282,7 +276,7 @@ function RequestCard({
               onClick={() => onChange({
                 assertions: [...entry.assertions, { type: 'jsonpath', selector: '', predicate: '==', value: '' }],
               })}
-              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 py-0.5"
+              className="btn-ghost text-xs flex items-center gap-1 py-0.5"
             >
               <Plus className="w-3 h-3" /> Add assertion
             </button>

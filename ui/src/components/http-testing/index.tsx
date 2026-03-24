@@ -224,7 +224,7 @@ export default function HttpTesting() {
             <span className="badge badge-gray">{testList.files.length} file{testList.files.length !== 1 ? 's' : ''}</span>
           )}
           {testList && !testList.hurlInstalled && (
-            <span className="badge badge-yellow">hurl not installed</span>
+            <span className="badge badge-amber">hurl not installed</span>
           )}
         </div>
         <div className="flex items-center gap-2">
@@ -244,7 +244,7 @@ export default function HttpTesting() {
             )}
           </button>
           {canEdit ? (
-            <button onClick={() => setShowBuilder(true)} className="btn-primary text-xs h-8 px-3">
+            <button onClick={() => setShowBuilder(true)} className="btn-accent text-xs h-8 px-3">
               <Plus className="w-3.5 h-3.5" /> New Test
             </button>
           ) : (
@@ -275,7 +275,7 @@ export default function HttpTesting() {
             </div>
             <button
               onClick={() => setVariables([...variables, { key: '', value: '' }])}
-              className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              className="btn-ghost text-xs flex items-center gap-1 px-2 py-1"
             >
               <Plus className="w-3 h-3" /> Add
             </button>
@@ -425,7 +425,7 @@ export default function HttpTesting() {
                 <button
                   onClick={handleRun}
                   disabled={running || !testList?.hurlInstalled}
-                  className="btn-blue text-xs h-7 px-3"
+                  className="btn-primary text-xs h-7 px-3"
                   title={!testList?.hurlInstalled ? 'Install hurl first' : 'Run test (⌘Enter)'}
                 >
                   {running ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
@@ -472,32 +472,28 @@ export default function HttpTesting() {
                   {fileRuns.length > 1 && (
                     <div className="flex items-center gap-1.5 px-4 py-1.5 bg-gray-50 border-b border-gray-200 shrink-0 overflow-x-auto">
                       <span className="text-xs text-gray-400 shrink-0 mr-0.5">Runs:</span>
-                      {fileRuns.map((run, i) => {
-                        const time = new Date(run.timestamp).toLocaleTimeString('en-US', {
-                          hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
-                        })
-                        const isActive = i === viewingRunIndex
-                        return (
-                          <button
-                            key={run.id}
-                            onClick={() => setViewingRunIndex(i)}
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono transition-colors shrink-0 ${
-                              isActive
-                                ? run.result.success
-                                  ? 'bg-green-100 text-green-800 ring-1 ring-green-300'
-                                  : 'bg-red-100 text-red-800 ring-1 ring-red-300'
-                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                            }`}
-                          >
-                            {run.result.success
-                              ? <Check className="w-3 h-3 text-green-600" />
-                              : <X className="w-3 h-3 text-red-500" />
-                            }
-                            {time}
-                            <span className="text-gray-400">{fmtDuration(run.result.durationMs)}</span>
-                          </button>
-                        )
-                      })}
+                      <div className="tab-group">
+                        {fileRuns.map((run, i) => {
+                          const time = new Date(run.timestamp).toLocaleTimeString('en-US', {
+                            hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+                          })
+                          const isActive = i === viewingRunIndex
+                          return (
+                            <button
+                              key={run.id}
+                              onClick={() => setViewingRunIndex(i)}
+                              className={`tab ${isActive ? 'tab-active' : ''}`}
+                            >
+                              {run.result.success
+                                ? <Check className="w-3 h-3 text-green-600" />
+                                : <X className="w-3 h-3 text-red-500" />
+                              }
+                              <span className="font-mono text-xs">{time}</span>
+                              <span className="text-gray-400 text-xs">{fmtDuration(run.result.durationMs)}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
                   )}
                   <RunOutput result={displayedRun.result} onViewTraces={viewTraces} variables={variables} />
