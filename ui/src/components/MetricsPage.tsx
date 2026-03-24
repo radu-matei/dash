@@ -122,7 +122,17 @@ function SectionHeader({ icon: Icon, title, sub }: { icon: typeof Activity; titl
 
 const TT = { contentStyle: { fontSize: 11, borderRadius: 8, border: '1px solid #e5e7eb' }, labelStyle: { fontWeight: 600 } }
 
-// Consistent color palette shared across component pills, chart lines, and bars
+const SKIP_META_ATTRS = new Set(['unit'])
+
+/** Stable key from ALL attributes -- used only for per-series delta tracking. */
+function fullAttrKey(attrs: Record<string, string> | undefined): string {
+  if (!attrs) return '_'
+  const entries = Object.entries(attrs)
+    .filter(([k]) => !SKIP_META_ATTRS.has(k))
+    .sort(([a], [b]) => a.localeCompare(b))
+  if (!entries.length) return '_'
+  return entries.map(([k, v]) => `${k}\0${v}`).join('\x01')
+}
 
 // ─── OTel metrics section ─────────────────────────────────────────────────────
 
@@ -190,70 +200,71 @@ function MetricCard({ series, activeComps, colorMap }: {
 }) {
   const unit = inferUnit(series)
 
-  // Component IDs present in THIS metric's data (subset of global allComponents)
-  const localComponents = useMemo(() => {
+  const attrKeys = useMemo(() => {
     const set = new Set<string>()
     for (const pt of series.points) {
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
-      if (comp) set.add(comp)
+      if (!pt.attrs) continue
+      for (const k of Object.keys(pt.attrs)) {
+        if (!SKIP_META_ATTRS.has(k)) set.add(k)
+      }
     }
     return Array.from(set).sort()
   }, [series.points])
 
-  const hasComponents = localComponents.length > 0
+  const [groupBy, setGroupBy] = useState<string | null>(null)
+  const activeGroupBy = groupBy
+    ?? attrKeys.find(k => k === 'component_id' || k === 'component')
+    ?? attrKeys[0]
+    ?? null
 
-  // Only render lines for components that are both local AND globally active
-  const activeList = localComponents.filter(c => activeComps.has(c))
+  const groupValues = useMemo(() => {
+    if (!activeGroupBy) return []
+    const set = new Set<string>()
+    for (const pt of series.points) {
+      const v = pt.attrs?.[activeGroupBy]
+      if (v) set.add(v)
+    }
+    return Array.from(set).sort()
+  }, [series.points, activeGroupBy])
 
-  // Pivot flat points into {time, compA: v, compB: v, ...} rows for Recharts.
-  // For cumulative monotonic counters, compute deltas so the chart shows the
-  // rate of change rather than a flat cumulative line.
+  const hasGroups = groupValues.length > 0
+
   const chartData = useMemo(() => {
     const pts = series.points.slice(-300)
-
-    if (series.kind === 'counter') {
-      const prev = new Map<string, number>()
-      const timeMap = new Map<string, Record<string, number | string>>()
-      for (const pt of pts) {
-        const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_v'
-        const prevVal = prev.get(comp)
-        prev.set(comp, pt.value)
-        if (prevVal === undefined) continue
-        const delta = Math.max(0, pt.value - prevVal)
-        const time = fmtTime(pt.timestamp)
-        if (!timeMap.has(time)) timeMap.set(time, { time })
-        const row = timeMap.get(time)!
-        row[comp] = ((row[comp] as number) ?? 0) + delta
-      }
-      return Array.from(timeMap.values())
-    }
-
     const timeMap = new Map<string, Record<string, number | string>>()
     for (const pt of pts) {
       const time = fmtTime(pt.timestamp)
+      const group = activeGroupBy ? (pt.attrs?.[activeGroupBy] ?? '_total') : '_total'
       if (!timeMap.has(time)) timeMap.set(time, { time })
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component']
-      timeMap.get(time)![comp ?? '_v'] = pt.value
+      const row = timeMap.get(time)!
+      row[group] = ((row[group] as number) ?? 0) + pt.value
     }
     return Array.from(timeMap.values())
-  }, [series.points, series.kind])
+  }, [series.points, activeGroupBy])
 
-  // Summary bars: latest value per component.
-  // For cumulative counters the latest value IS the total; for gauges it's the
-  // current reading.  Never sum cumulative counter values across data points.
-  const compSummary = useMemo(() => {
-    const m = new Map<string, number>()
-    for (const pt of series.points) {
-      const comp = pt.attrs?.['component_id'] ?? pt.attrs?.['component'] ?? '_total'
-      m.set(comp, pt.value)
+  const breakdown = useMemo(() => {
+    if (!activeGroupBy || groupValues.length === 0) {
+      const last = series.points[series.points.length - 1]
+      if (!last) return []
+      return [{ name: '_total', value: last.value }]
     }
-    return Array.from(m.entries())
+    const latestByFull = new Map<string, { group: string; value: number }>()
+    for (const pt of series.points) {
+      const fk = fullAttrKey(pt.attrs)
+      latestByFull.set(fk, { group: pt.attrs?.[activeGroupBy] ?? '_total', value: pt.value })
+    }
+    const grouped = new Map<string, number>()
+    for (const { group, value } of latestByFull.values()) {
+      grouped.set(group, (grouped.get(group) ?? 0) + value)
+    }
+    return Array.from(grouped.entries())
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
-  }, [series.points, series.kind])
+  }, [series.points, activeGroupBy, groupValues.length])
 
   const kindBadge = series.kind === 'counter' ? 'badge-blue' : series.kind === 'histogram' ? 'badge-purple' : 'badge-gray'
   const gradBase = `grad-${series.name.replace(/\./g, '-')}`
+  const getColor = (v: string) => colorMap.get(v) ?? componentHex(v)
 
   return (
     <div className="card p-5">
@@ -267,16 +278,36 @@ function MetricCard({ series, activeComps, colorMap }: {
         <span className={`badge ${kindBadge} ml-2 shrink-0`}>{series.kind}</span>
       </div>
 
-      {/* Timeline chart — one Area per active component */}
+      {/* Group-by dimension selector */}
+      {attrKeys.length > 1 && (
+        <div className="flex items-center gap-1 mb-3 flex-wrap">
+          <span className="text-[10px] text-gray-400 uppercase tracking-wider mr-1">by</span>
+          {attrKeys.map(k => (
+            <button
+              key={k}
+              onClick={() => setGroupBy(k)}
+              className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
+                k === activeGroupBy
+                  ? 'bg-gray-800 text-white'
+                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              {k}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Timeline chart */}
       {chartData.length > 1 && (
         <ResponsiveContainer width="100%" height={100}>
           <AreaChart data={chartData} margin={{ top: 2, right: 4, left: 2, bottom: 0 }}>
             <defs>
-              {hasComponents
-                ? localComponents.map(c => {
-                    const color = colorMap.get(c) ?? '#7c3aed'
+              {hasGroups
+                ? groupValues.map(v => {
+                    const color = getColor(v)
                     return (
-                      <linearGradient key={c} id={`${gradBase}-${c.replace(/\W/g, '_')}`} x1="0" y1="0" x2="0" y2="1">
+                      <linearGradient key={v} id={`${gradBase}-${v.replace(/\W/g, '_')}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="5%" stopColor={color} stopOpacity={0.2} />
                         <stop offset="95%" stopColor={color} stopOpacity={0} />
                       </linearGradient>
@@ -299,52 +330,56 @@ function MetricCard({ series, activeComps, colorMap }: {
             />
             <Tooltip
               {...TT}
-              formatter={(v: number, name: string) => [fmtMetricValue(v, unit), name === '_v' ? series.name : name]}
+              formatter={(v: number, name: string) => [fmtMetricValue(v, unit), name === '_total' ? series.name : name]}
             />
-            {hasComponents
-              ? activeList.map(c => {
-                  const color = colorMap.get(c) ?? '#7c3aed'
+            {hasGroups
+              ? groupValues.map(v => {
+                  const color = getColor(v)
                   return (
                     <Area
-                      key={c}
+                      key={v}
                       type="monotone"
-                      dataKey={c}
-                      name={c}
+                      dataKey={v}
+                      name={v}
                       stroke={color}
-                      fill={`url(#${gradBase}-${c.replace(/\W/g, '_')})`}
+                      fill={`url(#${gradBase}-${v.replace(/\W/g, '_')})`}
                       strokeWidth={1.5}
                       dot={false}
                       connectNulls
                     />
                   )
                 })
-              : <Area type="monotone" dataKey="_v" name={series.name} stroke="#7c3aed" fill={`url(#${gradBase})`} strokeWidth={1.5} dot={false} />
+              : <Area type="monotone" dataKey="_total" name={series.name} stroke="#7c3aed" fill={`url(#${gradBase})`} strokeWidth={1.5} dot={false} />
             }
           </AreaChart>
         </ResponsiveContainer>
       )}
 
-      {/* Per-component summary bars */}
-      {compSummary.length >= 1 && (
+      {/* Breakdown bars */}
+      {breakdown.length > 0 && (
         <div className="mt-3 border-t border-gray-100 pt-3">
-          <p className="text-xs font-semibold text-gray-500 mb-2">By component</p>
-          <div className="space-y-1.5">
-            {compSummary.map(c => {
-              const maxVal = compSummary[0].value
-              const color = colorMap.get(c.name) ?? '#7c3aed'
-              const isActive = c.name === '_total' || activeComps.has(c.name)
+          {activeGroupBy && attrKeys.length === 1 && (
+            <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-2">by {activeGroupBy}</p>
+          )}
+          <div className="grid gap-1.5" style={{ gridTemplateColumns: 'auto 1fr auto' }}>
+            {breakdown.map(c => {
+              const maxVal = breakdown[0].value
+              const color = getColor(c.name)
+              const isCompDim = activeGroupBy === 'component_id' || activeGroupBy === 'component'
+              const isActive = !isCompDim || activeComps.has(c.name)
+              const label = c.name === '_total' ? (series.name.split('.').pop() ?? series.name) : c.name
               return (
-                <div key={c.name} className={`flex items-center gap-2 text-xs transition-opacity ${isActive ? '' : 'opacity-30'}`}>
-                  <span className="w-28 truncate text-gray-600 font-mono" title={c.name}>
-                    {c.name === '_total' ? 'total' : c.name}
+                <div key={c.name} className={`grid grid-cols-subgrid col-span-3 items-center gap-2 text-xs transition-opacity ${isActive ? '' : 'opacity-30'}`}>
+                  <span className="truncate text-gray-600 font-mono max-w-56" title={c.name}>
+                    {label}
                   </span>
-                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden min-w-8">
                     <div
                       className="h-full rounded-full"
                       style={{ width: `${maxVal > 0 ? (c.value / maxVal) * 100 : 0}%`, backgroundColor: color }}
                     />
                   </div>
-                  <span className="w-20 text-right tabular-nums text-gray-700 font-mono">{fmtMetricValue(c.value, unit)}</span>
+                  <span className="text-right tabular-nums text-gray-700 font-mono whitespace-nowrap">{fmtMetricValue(c.value, unit)}</span>
                 </div>
               )
             })}

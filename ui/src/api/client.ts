@@ -156,12 +156,20 @@ export interface SpanEvent {
   attrs?: Record<string, string>
 }
 
+export interface HistogramBuckets {
+  boundaries: number[]
+  counts: number[]
+  sum: number
+  count: number
+}
+
 export interface MetricSeries {
   name: string
   description: string
   unit: string
   kind: 'counter' | 'gauge' | 'histogram'
   points: MetricPoint[]
+  buckets?: HistogramBuckets
 }
 
 export const getOtelMetrics = (signal?: AbortSignal) => get<Record<string, MetricSeries>>('/api/otel-metrics', signal)

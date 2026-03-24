@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
-  Activity, AlertCircle, ChevronDown, ChevronRight, Cpu,
+  Activity, AlertCircle, ArrowUpDown, ChevronDown, ChevronRight, Cpu,
   ExternalLink, FlaskConical, RefreshCw, Search, X,
 } from 'lucide-react'
 import { getTraces, getApp, type Span, type AppInfo } from '../api/client'
@@ -513,6 +513,7 @@ export default function TraceViewer() {
   const [selected, setSelected]   = useState<string | null>(null)
   const [filter, setFilter]       = useState('')
   const [errorsOnly, setErrorsOnly] = useState(() => searchParams.get('errors') === '1')
+  const [sortBy, setSortBy]       = useState<'recent' | 'longest'>('recent')
 
   // Time-window filter from URL (used by HTTP Tests "View Traces" links).
   const timeFrom  = searchParams.get('from') ? Number(searchParams.get('from')) : null
@@ -624,15 +625,30 @@ export default function TraceViewer() {
     }
     if (errorsOnly) all = all.filter(t => t.hasErrors)
     if (compFilter !== 'all') all = all.filter(t => t.components.has(compFilter))
-    if (!filter) return all
-    const q = filter.toLowerCase()
-    return all.filter(t =>
-      t.rootName.toLowerCase().includes(q) ||
-      t.component.toLowerCase().includes(q) ||
-      Array.from(t.components).some(c => c.toLowerCase().includes(q)) ||
-      t.traceId.includes(q)
-    )
-  }, [allGrouped, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo, compFilter])
+    if (filter) {
+      const q = filter.toLowerCase()
+      all = all.filter(t =>
+        t.rootName.toLowerCase().includes(q) ||
+        t.component.toLowerCase().includes(q) ||
+        Array.from(t.components).some(c => c.toLowerCase().includes(q)) ||
+        t.traceId.includes(q) ||
+        t.spans.some(s =>
+          s.name?.toLowerCase().includes(q) ||
+          Object.entries(s.attrs ?? {}).some(([k, v]) =>
+            k.toLowerCase().includes(q) || String(v).toLowerCase().includes(q)
+          ) ||
+          (s.events ?? []).some(ev =>
+            ev.name?.toLowerCase().includes(q) ||
+            Object.values(ev.attrs ?? {}).some(v => String(v).toLowerCase().includes(q))
+          )
+        )
+      )
+    }
+    if (sortBy === 'longest') {
+      all = [...all].sort((a, b) => b.durationMs - a.durationMs)
+    }
+    return all
+  }, [allGrouped, filter, errorsOnly, hasTimeFilter, timeFrom, timeTo, compFilter, sortBy])
 
   // Auto-select the first trace when arriving via a time-window deep link.
   const autoSelectedRef = useRef(false)
@@ -670,6 +686,15 @@ export default function TraceViewer() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Sort */}
+          <button
+            onClick={() => setSortBy(s => s === 'recent' ? 'longest' : 'recent')}
+            className={`btn text-xs h-8 px-2.5 ${sortBy === 'longest' ? 'bg-blue-100 text-blue-700 border border-blue-200 hover:bg-blue-200' : 'btn-secondary'}`}
+          >
+            <ArrowUpDown className="w-3.5 h-3.5" />
+            {sortBy === 'longest' ? 'Longest first' : 'Most recent'}
+          </button>
+
           {/* Errors only */}
           <button
             onClick={() => setErrorsOnly(v => !v)}
@@ -684,7 +709,7 @@ export default function TraceViewer() {
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               className="input text-xs py-1 pl-8 h-8 w-56"
-              placeholder="Filter by name, component…"
+              placeholder="Search traces…"
               value={filter}
               onChange={e => setFilter(e.target.value)}
             />
