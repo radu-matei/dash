@@ -259,6 +259,7 @@ export interface HurlTestFile {
   path: string
   dir: string
   content?: string
+  lastRun?: HurlRunResult
 }
 
 export interface HurlTestListResponse {
@@ -287,6 +288,9 @@ export const saveHurlFile = (path: string, content: string) =>
 
 export const runHurlTest = (path: string, variables?: Record<string, string>) =>
   post<HurlRunResult>('/api/hurl-run', { path, variables })
+
+export const runAllHurlTests = (paths?: string[], variables?: Record<string, string>) =>
+  post<{ results: HurlRunResult[] }>('/api/hurl-run-all', { paths, variables })
 
 export const deleteHurlFile = (path: string) =>
   post<MutationResult>('/api/hurl-delete', { path })

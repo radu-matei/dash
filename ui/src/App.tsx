@@ -6,9 +6,9 @@ import { CommandPaletteProvider } from './components/CommandPalette'
 import Layout from './components/Layout'
 import AppOverview from './components/AppOverview'
 import LogViewer from './components/LogViewer'
-import TraceViewer from './components/TraceViewer'
+import TraceViewer from './components/traces/TraceViewer'
 import MetricsPage from './components/MetricsPage'
-import HttpTesting from './components/HttpTesting'
+import HttpTesting from './components/http-testing'
 import KVExplorer from './components/KVExplorer'
 
 export default function App() {

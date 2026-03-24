@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -94,6 +92,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// collector so multiple dashboard instances can stitch cross-app traces.
 	otelReceiver := otel.NewReceiver(otelForwardTo)
 	metricsReceiver := otel.NewMetricsReceiver(500, otelForwardTo)
+	logsReceiver := otel.NewLogsReceiver(hub.PublishComponent, otelForwardTo)
 
 	// Locate the spin binary.
 	spinBin := os.Getenv("SPIN_BIN_PATH")
@@ -181,18 +180,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Start OTLP HTTP receiver on its own mux.
-	// Accept /v1/logs and /v1/metrics with a no-op 200 to silence SDK errors;
-	// only /v1/traces is parsed and surfaced in the UI.
 	otelMux := http.NewServeMux()
 	otelMux.HandleFunc("/v1/traces", otelReceiver.HandleOTLP)
 	otelMux.HandleFunc("/v1/metrics", metricsReceiver.HandleOTLP)
-	otelMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
-		if otelForwardTo != "" {
-			body, _ := io.ReadAll(r.Body)
-			go forwardOTLP(strings.TrimRight(otelForwardTo, "/")+"/v1/logs", r.Header.Get("Content-Type"), body)
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	otelMux.HandleFunc("/v1/logs", logsReceiver.HandleOTLP)
 
 	otelSrv := &http.Server{Handler: otelMux}
 	go func() {
@@ -301,23 +292,6 @@ func parseSpinArgs(args []string) (varOverrides map[string]string, listenAddr st
 		}
 	}
 	return
-}
-
-// forwardOTLP fires a best-effort POST of body to url.  Used for /v1/logs
-// which has no dedicated receiver struct but still needs forwarding.
-func forwardOTLP(url, contentType string, body []byte) {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
 }
 
 // normalizeListenAddr converts a spin --listen value like "0.0.0.0:3002" or
