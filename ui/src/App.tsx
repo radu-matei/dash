@@ -9,7 +9,7 @@ import LogViewer from './components/LogViewer'
 import TraceViewer from './components/traces/TraceViewer'
 import MetricsPage from './components/MetricsPage'
 import HttpTesting from './components/http-testing'
-import KVExplorer from './components/KVExplorer'
+import KVExplorer from './components/kv/KVExplorer'
 
 export default function App() {
   return (

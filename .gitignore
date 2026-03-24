@@ -21,3 +21,6 @@ internal/server/ui/dist/
 .vscode/
 .idea/
 *.swp
+
+target/
+.superpowers/

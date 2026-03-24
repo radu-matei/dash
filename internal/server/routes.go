@@ -60,14 +60,15 @@ func kvStoresHandler(cfg *config.AppConfig, cfgMu *sync.RWMutex) http.HandlerFun
 	}
 }
 
-// kvProxyHandler proxies KV explorer API requests to the injected component
-// running inside the Spin app.
+// kvProxyHandler proxies KV explorer API requests to the injected Rust
+// component running inside the Spin app. Values are transferred as raw bytes
+// (no JSON wrapping, no base64) for binary-safe round-trips.
 //
-// Dashboard route                  → Spin app route
-// GET  /api/kv/stores/{s}/keys     → GET  /internal/kv-explorer/api/stores/{s}
-// GET  /api/kv/stores/{s}/keys/{k} → GET  /internal/kv-explorer/api/stores/{s}/keys/{k}
-// POST /api/kv/stores/{s}/keys     → POST /internal/kv-explorer/api/stores/{s}
-// DELETE /api/kv/stores/{s}/keys/{k} → DELETE /internal/kv-explorer/api/stores/{s}/keys/{k}
+// Dashboard route                      → Spin app route
+// GET    /api/kv/stores/{s}/keys       → GET  /internal/kv-explorer/api/stores/{s}        (list keys, JSON)
+// GET    /api/kv/stores/{s}/keys/{k}   → GET  /internal/kv-explorer/api/stores/{s}/keys/{k} (raw bytes)
+// PUT    /api/kv/stores/{s}/keys/{k}   → POST /internal/kv-explorer/api/stores/{s}/keys/{k} (raw bytes in body)
+// DELETE /api/kv/stores/{s}/keys/{k}   → DELETE /internal/kv-explorer/api/stores/{s}/keys/{k}
 func kvProxyHandler(runner *process.Runner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		addr := runner.ListenAddr()
@@ -83,7 +84,6 @@ func kvProxyHandler(runner *process.Runner) http.HandlerFunc {
 			return
 		}
 
-		// rest is now "{store}/keys" or "{store}/keys/{key}"
 		parts := strings.SplitN(rest, "/keys", 2)
 		storeName := parts[0]
 		if storeName == "" {
@@ -98,16 +98,20 @@ func kvProxyHandler(runner *process.Runner) http.HandlerFunc {
 		}
 
 		if keyPart == "" || keyPart == "/" {
-			// Operating on the store: list keys or set key
 			targetPath = "/internal/kv-explorer/api/stores/" + storeName
 		} else {
-			// Operating on a specific key: /keys/{key}
 			targetPath = "/internal/kv-explorer/api/stores/" + storeName + "/keys" + keyPart
 		}
 
 		targetURL := strings.TrimRight(addr, "/") + targetPath
 
-		proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+		// PUT from dashboard → POST to Spin component
+		method := r.Method
+		if method == http.MethodPut {
+			method = http.MethodPost
+		}
+
+		proxyReq, err := http.NewRequestWithContext(r.Context(), method, targetURL, r.Body)
 		if err != nil {
 			jsonErr(w, http.StatusInternalServerError, "creating proxy request: "+err.Error())
 			return
@@ -121,7 +125,12 @@ func kvProxyHandler(runner *process.Runner) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		// Copy all response headers through.
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
 		w.WriteHeader(resp.StatusCode)
 		_, _ = io.Copy(w, resp.Body)
 	}
