@@ -21,13 +21,22 @@ type MetricPoint struct {
 	Attrs     map[string]string `json:"attrs,omitempty"`
 }
 
+// HistogramBuckets holds the latest explicit-boundary histogram snapshot.
+type HistogramBuckets struct {
+	Boundaries []float64 `json:"boundaries"`
+	Counts     []uint64  `json:"counts"`
+	Sum        float64   `json:"sum"`
+	Count      uint64    `json:"count"`
+}
+
 // MetricSeries accumulates data points for one named metric.
 type MetricSeries struct {
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Unit        string        `json:"unit"`
-	Kind        string        `json:"kind"` // "counter" | "gauge" | "histogram"
-	Points      []MetricPoint `json:"points"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Unit        string            `json:"unit"`
+	Kind        string            `json:"kind"` // "counter" | "gauge" | "histogram"
+	Points      []MetricPoint     `json:"points"`
+	Buckets     *HistogramBuckets `json:"buckets,omitempty"`
 }
 
 // MetricsReceiver stores OTel metrics exported by the Spin app.
@@ -101,6 +110,12 @@ func (r *MetricsReceiver) Series() map[string]*MetricSeries {
 		pts := make([]MetricPoint, len(v.Points))
 		copy(pts, v.Points)
 		cp.Points = pts
+		if v.Buckets != nil {
+			b := *v.Buckets
+			b.Boundaries = append([]float64(nil), v.Buckets.Boundaries...)
+			b.Counts = append([]uint64(nil), v.Buckets.Counts...)
+			cp.Buckets = &b
+		}
 		out[k] = &cp
 	}
 	return out
@@ -174,26 +189,51 @@ func (r *MetricsReceiver) ingest(m *metricspb.Metric) {
 
 	case *metricspb.Metric_Histogram:
 		s.Kind = "histogram"
+		var aggCounts []uint64
+		var bounds []float64
+		var totalSum float64
+		var totalCount uint64
 		for _, dp := range d.Histogram.DataPoints {
 			avg := 0.0
-			sum := dp.Sum
-			if sum != nil && dp.Count > 0 {
-				avg = *sum / float64(dp.Count)
+			if dp.Sum != nil && dp.Count > 0 {
+				avg = *dp.Sum / float64(dp.Count)
 			}
 			s.Points = append(s.Points, MetricPoint{
 				Timestamp: nanoToTime(dp.TimeUnixNano),
 				Value:     avg,
 				Attrs:     attrsMap(dp.Attributes),
 			})
+			if len(dp.ExplicitBounds) > 0 {
+				if bounds == nil {
+					bounds = dp.ExplicitBounds
+					aggCounts = make([]uint64, len(dp.BucketCounts))
+				}
+				for i, c := range dp.BucketCounts {
+					if i < len(aggCounts) {
+						aggCounts[i] += c
+					}
+				}
+				if dp.Sum != nil {
+					totalSum += *dp.Sum
+				}
+				totalCount += dp.Count
+			}
+		}
+		if bounds != nil {
+			s.Buckets = &HistogramBuckets{
+				Boundaries: bounds,
+				Counts:     aggCounts,
+				Sum:        totalSum,
+				Count:      totalCount,
+			}
 		}
 
 	case *metricspb.Metric_ExponentialHistogram:
 		s.Kind = "histogram"
 		for _, dp := range d.ExponentialHistogram.DataPoints {
 			avg := 0.0
-			sum := dp.Sum
-			if sum != nil && dp.Count > 0 {
-				avg = *sum / float64(dp.Count)
+			if dp.Sum != nil && dp.Count > 0 {
+				avg = *dp.Sum / float64(dp.Count)
 			}
 			s.Points = append(s.Points, MetricPoint{
 				Timestamp: nanoToTime(dp.TimeUnixNano),
