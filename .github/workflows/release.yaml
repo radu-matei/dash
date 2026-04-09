@@ -44,6 +44,13 @@ jobs:
         working-directory: ui
         run: npm ci && npm run build
 
+      - name: Build KV Explorer Wasm
+        working-directory: kv-explorer
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --target wasm32-wasip2 --release
+          cp target/wasm32-wasip2/release/kv_explorer.wasm ../internal/kvexplorer/wasm/kv_explorer.wasm
+
       - name: Install Spin
         uses: rajatjindal/setup-actions/spin@main
         with:

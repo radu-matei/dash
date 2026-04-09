@@ -2,6 +2,8 @@
 
 > Experimental project developed with assistive AI coding tools. Subject to breaking changes.
 
+This project requires Spin CLI 4.0 (or a [`canary` release](https://github.com/spinframework/spin/releases/tag/canary)).
+
 A zero-config local developer dashboard for the [Spin](https://github.com/spinframework/spin) framework.
 
 `spin dashboard` wraps `spin up` and opens a web UI for inspecting and (optionally) editing your Spin application — no separate tooling required.

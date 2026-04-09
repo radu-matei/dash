@@ -32,43 +32,94 @@
 @layer components {
   /* ── Cards ──────────────────────────────────────── */
   .card {
-    @apply bg-white border border-gray-200 rounded-xl shadow-card;
+    @apply bg-white border border-gray-200 rounded-14 shadow-card;
   }
 
   .card-hover {
-    @apply card transition-all duration-200 hover:shadow-card-hover hover:border-gray-300;
+    @apply card transition-all duration-200 hover:shadow-card-hover hover:border-gray-300 cursor-pointer;
+  }
+
+  .card-compact {
+    @apply card p-4;
+  }
+
+  .card-accent {
+    @apply card border-l-[3px] border-l-spin-oxfordblue;
   }
 
   /* ── Buttons ────────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+    @apply inline-flex items-center justify-center gap-1.5 rounded-10 text-[13px] font-semibold
            transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-1
-           focus:ring-spin-seagreen disabled:opacity-50 disabled:cursor-not-allowed;
+           focus:ring-spin-oxfordblue/15 disabled:opacity-50 disabled:cursor-not-allowed
+           active:scale-[0.98];
   }
 
+  /* Sizes */
+  .btn-sm {
+    @apply px-3 py-1 rounded-lg text-xs;
+  }
+
+  .btn-md {
+    @apply px-3.5 py-1.5;
+  }
+
+  .btn-lg {
+    @apply px-4.5 py-2 text-sm;
+  }
+
+  .btn-icon {
+    @apply p-1.5 rounded-lg;
+  }
+
+  .btn-icon-lg {
+    @apply p-2;
+  }
+
+  /* Variants */
   .btn-primary {
-    @apply btn bg-spin-seagreen hover:bg-spin-midgreen text-spin-oxfordblue
+    @apply btn btn-md bg-spin-oxfordblue hover:bg-spin-navy text-spin-seagreen
+           shadow-sm hover:shadow-md;
+  }
+
+  .btn-accent {
+    @apply btn btn-md bg-spin-seagreen hover:bg-spin-midgreen text-spin-oxfordblue
            shadow-sm hover:shadow-md;
   }
 
   .btn-secondary {
-    @apply btn bg-white hover:bg-gray-50 text-gray-700 border border-gray-200
+    @apply btn btn-md bg-white hover:bg-gray-50 text-gray-700 border border-gray-200
            hover:border-gray-300 shadow-sm;
   }
 
-  .btn-danger {
-    @apply btn bg-red-50 hover:bg-red-100 text-red-700 border border-red-200;
+  .btn-ghost {
+    @apply btn btn-md bg-transparent hover:bg-gray-100 text-gray-500 hover:text-gray-700;
   }
 
-  .btn-blue {
-    @apply btn bg-spin-colablue hover:bg-spin-colablue/90 text-white shadow-sm hover:shadow-md;
+  .btn-danger {
+    @apply btn btn-md bg-red-50 hover:bg-red-100 text-red-600 border border-red-200;
+  }
+
+  /* ── Tabs — Segment Control ─────────────────────── */
+  .tab-group {
+    @apply inline-flex bg-gray-100 rounded-10 p-[3px] gap-0.5;
+  }
+
+  .tab {
+    @apply px-3.5 py-1.5 rounded-lg text-xs font-medium text-gray-400
+           hover:text-gray-600 transition-all duration-150 cursor-pointer
+           whitespace-nowrap inline-flex items-center gap-1.5;
+  }
+
+  .tab-active {
+    @apply bg-white text-spin-oxfordblue font-semibold shadow-sm;
   }
 
   /* ── Inputs ─────────────────────────────────────── */
   .input {
-    @apply bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900
-           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-spin-seagreen
-           focus:border-transparent transition-all duration-150 shadow-sm;
+    @apply bg-white border border-gray-200 rounded-10 px-3 py-1.5 text-sm text-gray-900
+           placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-spin-oxfordblue/10
+           focus:border-spin-oxfordblue transition-all duration-150 shadow-sm;
   }
 
   .input-mono {
@@ -77,18 +128,29 @@
 
   /* ── Badges ─────────────────────────────────────── */
   .badge {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium;
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium;
+  }
+
+  .badge-sm {
+    @apply px-1.5 py-px text-[10px];
   }
 
   .badge-green   { @apply badge bg-green-100 text-green-800; }
   .badge-blue    { @apply badge bg-blue-100 text-blue-800; }
-  .badge-yellow  { @apply badge bg-amber-100 text-amber-800; }
-  .badge-orange  { @apply badge bg-orange-100 text-orange-800; }
+  .badge-amber   { @apply badge bg-amber-100 text-amber-800; }
   .badge-red     { @apply badge bg-red-100 text-red-800; }
   .badge-gray    { @apply badge bg-gray-100 text-gray-700; }
   .badge-purple  { @apply badge bg-purple-100 text-purple-800; }
-  .badge-teal     { @apply badge bg-teal-100 text-teal-800; }
-  .badge-seagreen { @apply badge bg-spin-seagreen/20 text-spin-oxfordblue; }
+  .badge-brand   { @apply badge bg-spin-oxfordblue/[0.08] text-spin-oxfordblue; }
+
+  /* ── Modals ─────────────────────────────────────── */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-spin-oxfordblue/40 backdrop-blur-sm;
+  }
+
+  .modal {
+    @apply bg-white rounded-16 shadow-xl max-w-lg w-full mx-auto p-6;
+  }
 
   /* ── Tables ─────────────────────────────────────── */
   .data-table {
@@ -124,7 +186,8 @@
   /* ── Nav items (dark sidebar context) ────────────── */
   .nav-item {
     @apply flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium
-           transition-all duration-150 cursor-pointer;
+           transition-all duration-150 cursor-pointer
+           focus:outline-none focus:ring-2 focus:ring-spin-seagreen/20 focus:ring-offset-0;
   }
 
   .nav-item-active {

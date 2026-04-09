@@ -1,9 +1,10 @@
-// Package kvexplorer handles injecting the pre-built spin-kv-explorer
-// component into a temporary Spin manifest so the dashboard can browse KV
+// Package kvexplorer handles injecting the KV explorer Spin component
+// into a temporary Spin manifest so the dashboard can browse KV
 // stores without modifying the user's spin.toml.
 package kvexplorer
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,11 +14,12 @@ import (
 	"github.com/spinframework/dash/internal/config"
 )
 
-const (
-	wasmURL    = "https://github.com/fermyon/spin-kv-explorer/releases/download/v0.10.0/spin-kv-explorer.wasm"
-	wasmDigest = "sha256:65bc286f8315746d1beecd2430e178f539fa487ebf6520099daae09a35dbce1d"
+//go:embed wasm/kv_explorer.wasm
+var embeddedWasm embed.FS
 
+const (
 	manifestFile = ".dash_manifest.toml"
+	wasmFile     = ".dash_kv_explorer.wasm"
 
 	// ExplorerRoute is the HTTP route prefix where the KV explorer component
 	// is mounted inside the Spin app.
@@ -43,17 +45,24 @@ func CollectKVStores(cfg *config.AppConfig) []string {
 
 // InjectManifest creates a temporary Spin manifest that includes the original
 // spin.toml content plus an injected KV explorer component with access to all
-// the given stores. The manifest is written to the project root as a dotfile
-// so that all relative paths in the original manifest still resolve correctly.
-//
-// Spin fetches the Wasm binary from the remote URL on its own — no local
-// download is needed.
+// the given stores. The embedded Wasm binary is written to a dotfile next to
+// spin.toml so that the Spin runtime can load it.
 //
 // Returns the path to the temp manifest (for use with spin up --from).
 func InjectManifest(dir string, stores []string) (string, error) {
 	original, err := os.ReadFile(filepath.Join(dir, "spin.toml"))
 	if err != nil {
 		return "", fmt.Errorf("reading spin.toml: %w", err)
+	}
+
+	// Write the embedded Wasm to disk so Spin can load it.
+	wasmData, err := embeddedWasm.ReadFile("wasm/kv_explorer.wasm")
+	if err != nil {
+		return "", fmt.Errorf("reading embedded wasm: %w", err)
+	}
+	wasmPath := filepath.Join(dir, wasmFile)
+	if err := os.WriteFile(wasmPath, wasmData, 0o644); err != nil {
+		return "", fmt.Errorf("writing wasm file: %w", err)
 	}
 
 	quoted := make([]string, len(stores))
@@ -68,14 +77,13 @@ func InjectManifest(dir string, stores []string) (string, error) {
 # The real spin.toml is not modified.
 
 [component.dash-kv-explorer]
-source = { url = %q, digest = %q }
+source = %q
 key_value_stores = [%s]
-environment = { SPIN_APP_KV_SKIP_AUTH = "1" }
 
 [[trigger.http]]
 route = "/internal/kv-explorer/..."
 component = "dash-kv-explorer"
-`, wasmURL, wasmDigest, strings.Join(quoted, ", "))
+`, wasmFile, strings.Join(quoted, ", "))
 
 	manifestPath := filepath.Join(dir, manifestFile)
 	content := string(original) + injection
@@ -102,7 +110,8 @@ func CopyManifest(dir string) error {
 	return os.WriteFile(filepath.Join(dir, manifestFile), original, 0o644)
 }
 
-// Cleanup removes the temporary manifest.
+// Cleanup removes the temporary manifest and wasm file.
 func Cleanup(dir string) {
 	os.Remove(filepath.Join(dir, manifestFile))
+	os.Remove(filepath.Join(dir, wasmFile))
 }

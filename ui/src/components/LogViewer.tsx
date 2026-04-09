@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { ArrowDown, Braces, ChevronDown, ChevronRight, Clock, Cpu, Search, Settings2, Trash2, X } from 'lucide-react'
+import { Braces, Check, ChevronDown, ChevronRight, Clock, Copy, Cpu, Pause, Search, Settings2, Trash2, X } from 'lucide-react'
 import { useLogStore } from '../store/logContext'
 import { useAppStore } from '../store/appContext'
 import type { LogLine } from '../api/client'
@@ -23,18 +23,10 @@ export interface ParsedLine {
   level: Level | null
   source: string | null
   message: string
-  isHttpIn: boolean
-  isHttpOut: boolean
-  httpMethod: string
-  httpPath: string
-  httpStatus: number | null
-  httpDuration: string
 }
 
 const RUST_LOG_RE  = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s+(ERROR|WARN|INFO|DEBUG|TRACE)\s+([^\s:]+):\s+([\s\S]*)$/
 const TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}T[\d:.]+Z)/
-const HTTP_IN_RE   = /^<--\s+(\w+)\s+(.+)$/
-const HTTP_OUT_RE  = /^-->\s+(\w+)\s+(.+?)\s+(\d{3})\s+(.*)$/
 
 const LEVEL_ORDER: Record<Level, number> = { ERROR: 0, WARN: 1, INFO: 2, DEBUG: 3, TRACE: 4 }
 
@@ -44,31 +36,16 @@ export function parseLogLine(raw: LogLine): ParsedLine {
   const id = ++seq
   const clean = strip(raw.line)
 
-  const httpIn = clean.match(HTTP_IN_RE)
-  if (httpIn) return base(id, raw, clean, null, null, null, null, true, false, httpIn[1], httpIn[2], null, '')
-  const httpOut = clean.match(HTTP_OUT_RE)
-  if (httpOut) return base(id, raw, clean, null, null, null, null, false, true, httpOut[1], httpOut[2], parseInt(httpOut[3], 10), httpOut[4] ?? '')
-
   const rust = clean.match(RUST_LOG_RE)
   if (rust) {
     const ts = parseIso(rust[1])
-    return base(id, raw, rust[4], fmtMs(ts), ts, rust[2] as Level, rust[3], false, false, '', '', null, '')
+    return { id, raw, timestamp: fmtMs(ts), timestampMs: ts, level: rust[2] as Level, source: rust[3], message: rust[4] }
   }
 
   const tsMatch = clean.match(TIMESTAMP_RE)
   const ts = tsMatch ? parseIso(tsMatch[1]) : (raw.receivedAt ?? null)
   const rest = tsMatch ? clean.slice(tsMatch[1].length).trimStart() : clean
-  return base(id, raw, rest, ts ? fmtMs(ts) : null, ts, detectLevel(clean), null, false, false, '', '', null, '')
-}
-
-function base(
-  id: number, raw: LogLine, message: string,
-  timestamp: string | null, timestampMs: number | null,
-  level: Level | null, source: string | null,
-  isHttpIn: boolean, isHttpOut: boolean,
-  httpMethod: string, httpPath: string, httpStatus: number | null, httpDuration: string,
-): ParsedLine {
-  return { id, raw, timestamp, timestampMs, level, source, message, isHttpIn, isHttpOut, httpMethod, httpPath, httpStatus, httpDuration }
+  return { id, raw, timestamp: ts ? fmtMs(ts) : null, timestampMs: ts, level: detectLevel(clean), source: null, message: rest }
 }
 
 // Word-boundary regexes prevent false positives (e.g. "thiserror" ≠ ERROR).
@@ -103,11 +80,11 @@ function fmtMs(ms: number): string {
 // ─── Visual helpers ───────────────────────────────────────────────────────────
 
 const LEVEL_BADGE: Record<Level, string> = {
-  ERROR: 'bg-red-100 text-red-700 border border-red-200',
-  WARN:  'bg-amber-100 text-amber-700 border border-amber-200',
-  INFO:  'bg-blue-100 text-blue-700 border border-blue-200',
-  DEBUG: 'bg-gray-100 text-gray-500 border border-gray-200',
-  TRACE: 'bg-gray-50 text-gray-400 border border-gray-200',
+  ERROR: 'badge-red',
+  WARN:  'badge-amber',
+  INFO:  'badge-blue',
+  DEBUG: 'badge-gray',
+  TRACE: 'badge-gray opacity-60',
 }
 const LEVEL_ROW: Record<Level, string> = {
   ERROR: 'bg-red-50/50', WARN: 'bg-amber-50/30', INFO: '', DEBUG: '', TRACE: 'opacity-60',
@@ -116,39 +93,61 @@ const LEVEL_ROW: Record<Level, string> = {
 function LevelBadge({ level }: { level: Level | null }) {
   if (!level) return <span className="w-14 shrink-0" />
   return (
-    <span className={`inline-flex items-center justify-center px-1.5 py-px rounded text-xs font-mono font-semibold w-14 shrink-0 ${LEVEL_BADGE[level]}`}>
+    <span className={`inline-flex items-center justify-center badge-sm font-mono font-semibold w-14 shrink-0 ${LEVEL_BADGE[level]}`}>
       {level}
     </span>
   )
 }
 
-function statusColor(s: number) {
-  if (s < 300) return 'bg-green-100 text-green-800'
-  if (s < 500) return 'bg-amber-100 text-amber-800'
-  return 'bg-red-100 text-red-800'
+function msgColor(level: Level | null): string {
+  if (level === 'ERROR') return 'text-red-700'
+  if (level === 'WARN') return 'text-amber-800'
+  if (level === 'TRACE') return 'text-gray-400'
+  return 'text-gray-800'
 }
 
-function HttpCell({ l }: { l: ParsedLine }) {
-  if (l.isHttpIn) return (
-    <span className="flex items-center gap-1.5">
-      <span className="text-blue-400 font-mono text-xs select-none">←</span>
-      <span className="font-semibold text-blue-700">{l.httpMethod}</span>
-      <span className="text-gray-700">{l.httpPath}</span>
-    </span>
-  )
-  const s = l.httpStatus!
+// ─── Search highlight ─────────────────────────────────────────────────────────
+
+function HighlightText({ text, search }: { text: string; search: string }) {
+  if (!search) return <>{text}</>
+  const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(${escaped})`, 'gi')
+  const parts = text.split(re)
+  if (parts.length === 1) return <>{text}</>
   return (
-    <span className="flex items-center gap-1.5">
-      <span className="text-gray-400 font-mono text-xs select-none">→</span>
-      <span className="font-semibold text-gray-600">{l.httpMethod}</span>
-      <span className="text-gray-700">{l.httpPath}</span>
-      <span className={`px-1.5 py-px rounded text-xs font-mono font-semibold ${statusColor(s)}`}>{s}</span>
-      {l.httpDuration && <span className="text-gray-400 text-xs">{l.httpDuration}</span>}
-    </span>
+    <>
+      {parts.map((part, i) =>
+        re.test(part)
+          ? <mark key={i} className="bg-amber-200 text-inherit rounded-sm px-px">{part}</mark>
+          : part
+      )}
+    </>
   )
 }
 
-// ─── Component color palette ──────────────────────────────────────────────────
+// ─── Copy button ─────────────────────────────────────────────────────────────
+
+function CopyButton({ text, className = '' }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+  return (
+    <button
+      onClick={copy}
+      className={`inline-flex items-center justify-center rounded p-0.5 transition-colors ${
+        copied ? 'text-green-500' : 'text-gray-300 hover:text-gray-500'
+      } ${className}`}
+      title="Copy"
+    >
+      {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+    </button>
+  )
+}
 
 // ─── JSON detection & grouping ────────────────────────────────────────────────
 
@@ -235,14 +234,13 @@ function colorizeJSON(json: string): React.ReactNode {
 
 // ─── JsonBlock component ──────────────────────────────────────────────────────
 
-function JsonBlock({ group, compact }: { group: JsonGroup; compact?: boolean }) {
+function JsonBlock({ group, compact, search }: { group: JsonGroup; compact?: boolean; search?: string }) {
   const first = group.lines[0]
   const pretty = JSON.stringify(group.parsed, null, 2)
   const lineCount = pretty.split('\n').length
   const [open, setOpen] = useState(lineCount <= 6)
   const rowCls = first.level ? LEVEL_ROW[first.level] : ''
-  const isStderr     = first.raw.subStream === 'stderr'
-  const displayLevel: Level | null = first.level ?? (compact && isStderr ? 'ERROR' : null)
+  const displayLevel: Level | null = first.level ?? null
   const effectiveRowCls = (displayLevel ? LEVEL_ROW[displayLevel] : '') || rowCls
 
   const sourceLabel = compact
@@ -250,7 +248,7 @@ function JsonBlock({ group, compact }: { group: JsonGroup; compact?: boolean }) 
     : (first.source ? first.source.split('::').pop()! : first.raw.stream)
 
   return (
-    <div className={`border-b border-gray-50 ${effectiveRowCls}`}>
+    <div className={`group/row border-b border-gray-50 ${effectiveRowCls}`}>
       <div
         className="flex items-start px-4 py-px leading-5 hover:bg-gray-50/70 transition-colors cursor-pointer select-none"
         onClick={() => setOpen(o => !o)}
@@ -264,23 +262,30 @@ function JsonBlock({ group, compact }: { group: JsonGroup; compact?: boolean }) 
         <span className="flex-1 flex items-center gap-1.5 min-w-0">
           {open ? <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" /> : <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />}
           <Braces className="w-3 h-3 text-blue-400 shrink-0" />
-          {group.prefix && <span className="text-gray-500 truncate mr-1">{group.prefix}</span>}
+          {group.prefix && <span className="text-gray-500 truncate mr-1"><HighlightText text={group.prefix} search={search ?? ''} /></span>}
           {!open && (
-            <span className="text-gray-400 italic">
+            <span className="text-gray-400 italic truncate">
               {Array.isArray(group.parsed)
                 ? `[${(group.parsed as unknown[]).length} items]`
-                : `{${Object.keys(group.parsed as object).slice(0, 3).join(', ')}${Object.keys(group.parsed as object).length > 3 ? ', …' : ''}}`
+                : `{${Object.keys(group.parsed as object).slice(0, 3).join(', ')}${Object.keys(group.parsed as object).length > 3 ? ', \u2026' : ''}}`
               }
             </span>
           )}
-          <span className="ml-auto text-gray-300 text-[10px] tabular-nums shrink-0">
-            {group.lines.length > 1 ? `${group.lines.length} lines` : ''}
+          <span className="ml-auto flex items-center gap-1.5 shrink-0">
+            {group.lines.length > 1 && (
+              <span className="text-gray-300 text-[10px] tabular-nums">{group.lines.length} lines</span>
+            )}
+            <CopyButton text={pretty} className="opacity-0 group-hover/row:opacity-100" />
           </span>
         </span>
       </div>
       {open && (
-        <div className="mx-4 mb-1.5 mt-0.5 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto">
-          <pre className="px-3 py-2 text-xs leading-relaxed whitespace-pre font-mono">
+        <div className={`mb-1.5 mt-0.5 rounded-lg bg-gray-50 border border-gray-200 overflow-x-auto ${compact ? 'ml-[6.5rem]' : 'ml-[11.5rem]'} mr-4`}>
+          <div className="flex items-center justify-between px-3 pt-1.5">
+            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">JSON</span>
+            <CopyButton text={pretty} />
+          </div>
+          <pre className="px-3 py-1.5 text-xs leading-relaxed whitespace-pre font-mono">
             {colorizeJSON(pretty)}
           </pre>
         </div>
@@ -292,89 +297,72 @@ function JsonBlock({ group, compact }: { group: JsonGroup; compact?: boolean }) 
 // ─── Filter types ─────────────────────────────────────────────────────────────
 
 type LevelFilter  = 'ALL' | Level
-type SubStream    = 'both' | 'stdout' | 'stderr'
-type StreamFilter = 'all' | 'stdout' | 'stderr' | 'system'
-
 const LEVEL_OPTS: LevelFilter[] = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRACE']
-const STREAM_OPTS: { value: StreamFilter; label: string }[] = [
-  { value: 'all',    label: 'All' },
-  { value: 'stdout', label: 'stdout' },
-  { value: 'stderr', label: 'stderr' },
-  { value: 'system', label: 'System' },
-]
 
-// ─── Tab indicator status ─────────────────────────────────────────────────────
+// ─── Log row renderers ───────────────────────────────────────────────────────
 
-type TabStatus = 'error' | 'warn' | 'active' | 'idle'
-
-function tabStatus(lines: ParsedLine[]): TabStatus {
-  if (lines.some(l => l.level === 'ERROR')) return 'error'
-  if (lines.some(l => l.level === 'WARN'))  return 'warn'
-  if (lines.length > 0)                     return 'active'
-  return 'idle'
-}
-
-const STATUS_DOT: Record<TabStatus, string> = {
-  error:  'bg-red-500',
-  warn:   'bg-amber-400',
-  active: 'bg-emerald-400',
-  idle:   'bg-gray-300',
-}
-
-// ─── Log body renderers ───────────────────────────────────────────────────────
-
-/** Full 4-column layout used in the Spin tab. */
-function SpinLogRow({ l }: { l: ParsedLine }) {
-  const isHttp = l.isHttpIn || l.isHttpOut
+/** Full 5-column layout used in the Spin tab.
+ *  Columns: level · timestamp · component · stream · message.
+ *  The component column shows l.raw.component when the log was OTel-tagged
+ *  (stream === 'component'). For raw stdout/stderr lines from `spin up`'s
+ *  process pipes it's blank — Spin doesn't tag those lines with a component
+ *  id on its own. The stream column always shows the origin (stdout / stderr
+ *  / system / component) so the two columns together convey both "who" and
+ *  "which pipe". */
+function SpinLogRow({ l, search }: { l: ParsedLine; search: string }) {
   const rowCls = l.level ? LEVEL_ROW[l.level] : ''
+  const compId = l.raw.stream === 'component' ? l.raw.component ?? '' : ''
+  const compPal = compId ? componentTw(compId) : null
   return (
-    <div className={`flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}>
+    <div className={`group/row flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}>
       <span className="w-14 shrink-0 pt-px">
-        {isHttp ? (
-          <span className={`inline-flex items-center justify-center px-1.5 py-px rounded text-xs font-semibold w-14 ${l.isHttpIn ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-green-100 text-green-700 border border-green-200'}`}>
-            {l.isHttpIn ? 'REQ' : 'RES'}
-          </span>
-        ) : <LevelBadge level={l.level} />}
+        <LevelBadge level={l.level} />
       </span>
       <span className="w-4 shrink-0" />
       <span className="w-24 shrink-0 text-gray-400 tabular-nums pt-px">{l.timestamp ?? ''}</span>
-      <span className="w-36 shrink-0 text-gray-400 truncate pt-px" title={l.source ?? l.raw.stream}>
-        {l.source ? l.source.split('::').pop() : l.raw.stream}
-      </span>
-      <span className="flex-1 break-all">
-        {isHttp ? <HttpCell l={l} /> : (
-          <span className={l.level === 'ERROR' ? 'text-red-700' : l.level === 'WARN' ? 'text-amber-800' : l.level === 'TRACE' ? 'text-gray-400' : 'text-gray-800'}>
-            {l.message}
-          </span>
+      <span className="w-28 shrink-0 truncate pt-px flex items-center gap-1.5" title={compId || '—'}>
+        {compId ? (
+          <>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${compPal!.dot}`} />
+            <span className={`font-mono truncate ${compPal!.text}`}>{compId}</span>
+          </>
+        ) : (
+          <span className="text-gray-300">—</span>
         )}
+      </span>
+      <span
+        className="w-28 shrink-0 text-gray-400 truncate pt-px"
+        title={l.source ?? l.raw.stream}
+      >
+        {l.source
+          ? l.source.split('::').pop()
+          : l.raw.stream === 'component' ? (l.raw.subStream ?? 'stdout') : l.raw.stream}
+      </span>
+      <span className="flex-1 flex items-center gap-1 min-w-0">
+        <span className={`flex-1 break-all ${msgColor(l.level)}`}>
+          <HighlightText text={l.message} search={search} />
+        </span>
+        <CopyButton text={l.raw.line} className="opacity-0 group-hover/row:opacity-100 shrink-0" />
       </span>
     </div>
   )
 }
 
-/** Compact layout used in component tabs.
- *  stderr lines with no detected level are shown as ERROR for consistency. */
-function CompLogRow({ l }: { l: ParsedLine }) {
-  const isHttp   = l.isHttpIn || l.isHttpOut
-  const isStderr = l.raw.subStream === 'stderr'
-  const displayLevel: Level | null = l.level ?? (isStderr ? 'ERROR' : null)
+/** Compact layout used in component tabs. */
+function CompLogRow({ l, search }: { l: ParsedLine; search: string }) {
+  const displayLevel: Level | null = l.level ?? null
   const rowCls = displayLevel ? LEVEL_ROW[displayLevel] : ''
   return (
-    <div className={`flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}>
+    <div className={`group/row flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}>
       <span className="w-14 shrink-0 pt-px">
-        {isHttp ? (
-          <span className={`inline-flex items-center justify-center px-1.5 py-px rounded text-xs font-semibold w-14 ${l.isHttpIn ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-green-100 text-green-700 border border-green-200'}`}>
-            {l.isHttpIn ? 'REQ' : 'RES'}
-          </span>
-        ) : <LevelBadge level={displayLevel} />}
+        <LevelBadge level={displayLevel} />
       </span>
       <span className="w-24 shrink-0 text-gray-400 tabular-nums pt-px">{l.timestamp ?? ''}</span>
-      <span className="flex-1 break-all">
-        {isHttp ? <HttpCell l={l} /> : (
-          <span className={displayLevel === 'ERROR' ? 'text-red-700' : displayLevel === 'WARN' ? 'text-amber-800' : displayLevel === 'TRACE' ? 'text-gray-400' : 'text-gray-800'}>
-            {l.message}
-          </span>
-        )}
+      <span className="flex-1 flex items-center gap-1 min-w-0">
+        <span className={`flex-1 break-all ${msgColor(displayLevel)}`}>
+          <HighlightText text={l.message} search={search} />
+        </span>
+        <CopyButton text={l.raw.line} className="opacity-0 group-hover/row:opacity-100 shrink-0" />
       </span>
     </div>
   )
@@ -383,10 +371,11 @@ function CompLogRow({ l }: { l: ParsedLine }) {
 // ─── Shared log body ──────────────────────────────────────────────────────────
 
 function LogBody({
-  groups, compact, containerRef, bottomRef, onScroll, empty,
+  groups, compact, search, containerRef, bottomRef, onScroll, empty,
 }: {
   groups: RenderGroup[]
   compact: boolean
+  search: string
   containerRef: React.RefObject<HTMLDivElement>
   bottomRef: React.RefObject<HTMLDivElement>
   onScroll: () => void
@@ -401,12 +390,12 @@ function LogBody({
         </div>
       ) : groups.map((group, gi) => {
         if (group.type === 'json') {
-          return <JsonBlock key={group.lines[0].id} group={group} compact={compact} />
+          return <JsonBlock key={group.lines[0].id} group={group} compact={compact} search={search} />
         }
         const l = group.line
         return compact
-          ? <CompLogRow key={gi} l={l} />
-          : <SpinLogRow key={gi} l={l} />
+          ? <CompLogRow key={gi} l={l} search={search} />
+          : <SpinLogRow key={gi} l={l} search={search} />
       })}
       <div ref={bottomRef} />
     </div>
@@ -431,8 +420,6 @@ export default function LogViewer() {
   // Tab + filter state
   const [activeTab, setActiveTabRaw]  = useState<ActiveTab>(searchParams.get('component') ?? 'spin')
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL')
-  const [spinStream, setSpinStream]   = useState<StreamFilter>('all')
-  const [subStream, setSubStream]     = useState<SubStream>('both')
   const [search, setSearch]           = useState(searchParams.get('search') ?? '')
   const [autoScroll, setAutoScroll]   = useState(true)
 
@@ -454,8 +441,10 @@ export default function LogViewer() {
   const bottomRef    = useRef<HTMLDivElement>(null!)
   const containerRef = useRef<HTMLDivElement>(null!)
 
-  // Parse all raw lines once
-  const allLines = useMemo(() => rawLines.map(parseLogLine), [rawLines])
+  // Parse all raw lines once, dropping empty lines
+  const allLines = useMemo(() => rawLines
+    .filter(r => r.line.trim() !== '')
+    .map(parseLogLine), [rawLines])
 
   // Derive component ids: from app config first, then supplement with
   // whatever component names appear in the log stream.
@@ -478,7 +467,6 @@ export default function LogViewer() {
   // Helper filters
   const levelOk = (l: ParsedLine) => {
     if (levelFilter === 'ALL') return true
-    if (l.isHttpIn || l.isHttpOut) return false
     if (!l.level) return false
     return LEVEL_ORDER[l.level] <= LEVEL_ORDER[levelFilter as Level]
   }
@@ -495,14 +483,18 @@ export default function LogViewer() {
     return true
   }
 
-  // Lines for the Spin tab (process stdout/stderr + system)
+  // Lines for the Spin tab — an aggregated "all sources" view containing both
+  // Spin's own process output (system / build / startup) and OTel-structured
+  // component logs with proper per-component attribution. Dashboard launches
+  // Spin with --quiet so component stdout/stderr no longer shows up as
+  // untagged "stdout/stderr" lines on Spin's process pipes; component output
+  // arrives exclusively through OTel (stream === 'component'), carrying its
+  // component id.
   const spinLines = useMemo(() => allLines.filter(l => {
-    if (l.raw.stream === 'component') return false
-    if (spinStream !== 'all' && l.raw.stream !== spinStream) return false
     if (!levelOk(l) || !searchOk(l) || !timeOk(l)) return false
     return true
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [allLines, spinStream, levelFilter, search, fromMs, toMs])
+  }), [allLines, levelFilter, search, fromMs, toMs])
 
   // Lines for the active component tab
   const compLines = useMemo(() => {
@@ -510,12 +502,11 @@ export default function LogViewer() {
     return allLines.filter(l => {
       if (l.raw.stream !== 'component') return false
       if (l.raw.component !== activeTab) return false
-      if (subStream !== 'both' && l.raw.subStream !== subStream) return false
       if (!levelOk(l) || !searchOk(l)) return false
       return true
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allLines, activeTab, subStream, levelFilter, search])
+  }, [allLines, activeTab, levelFilter, search])
 
   const activeLines  = activeTab === 'spin' ? spinLines : compLines
   const renderGroups = useMemo(() => buildRenderGroups(activeLines), [activeLines])
@@ -533,21 +524,8 @@ export default function LogViewer() {
     setAutoScroll(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
   }
 
-  // Tab status indicators
-  const spinStatus = useMemo(() => tabStatus(
-    allLines.filter(l => l.raw.stream !== 'component')
-  ), [allLines])
-
-  const compStatuses = useMemo(() => {
-    const map: Record<string, TabStatus> = {}
-    for (const id of compIds) {
-      map[id] = tabStatus(allLines.filter(l => l.raw.stream === 'component' && l.raw.component === id))
-    }
-    return map
-  }, [allLines, compIds])
-
   const totalErrors = useMemo(() =>
-    allLines.filter(l => l.raw.stream !== 'component' && l.level === 'ERROR').length
+    allLines.filter(l => l.level === 'ERROR').length
   , [allLines])
 
   const compErrors = (id: string) =>
@@ -570,125 +548,104 @@ export default function LogViewer() {
           <span className="text-xs text-gray-400">{allLines.length} lines</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Search */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              className="input text-xs py-1 pl-8 h-8 w-48"
-              placeholder="Search…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
           {/* Clear */}
-          <button className="btn-secondary text-xs h-8 px-2.5" onClick={clear} title="Clear log">
+          <button className="btn-ghost btn-icon" onClick={clear} title="Clear log">
             <Trash2 className="w-3.5 h-3.5" />
           </button>
-          {/* Auto-scroll */}
+          {/* Live / Pause toggle */}
           {!fromMs && !toMs && (
-            <button
-              className={`btn text-xs h-8 px-2.5 ${autoScroll ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => setAutoScroll(v => !v)}
-              title="Auto-scroll to bottom"
-            >
-              <ArrowDown className="w-3.5 h-3.5" />
-            </button>
+            <div className="tab-group">
+              <button
+                onClick={() => setAutoScroll(true)}
+                className={`tab ${autoScroll ? 'tab-active' : ''}`}
+                title="Live updates"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className={`absolute inline-flex h-full w-full rounded-full bg-green-400 ${autoScroll ? 'animate-ping opacity-75' : 'opacity-0'}`} />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
+                Live
+              </button>
+              <button
+                onClick={() => setAutoScroll(false)}
+                className={`tab ${!autoScroll ? 'tab-active' : ''}`}
+                title="Pause live updates"
+              >
+                <Pause className="w-3.5 h-3.5" />
+                Paused
+              </button>
+            </div>
           )}
         </div>
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-stretch gap-0 border-b border-gray-200 bg-gray-50 px-4 shrink-0 overflow-x-auto scrollbar-hide h-[37px]">
+      <div className="flex items-center gap-2 px-4 py-2 shrink-0 overflow-x-auto scrollbar-hide">
+        <div className="tab-group">
+          {/* Spin tab */}
+          <button
+            onClick={() => setActiveTab('spin')}
+            className={`tab ${activeTab === 'spin' ? 'tab-active' : ''}`}
+          >
+            <Settings2 className="w-3.5 h-3.5 shrink-0" />
+            Spin
+            {totalErrors > 0 && (
+              <span className="badge-sm badge-red font-semibold">{totalErrors}</span>
+            )}
+          </button>
 
-        {/* Spin tab */}
-        <button
-          onClick={() => setActiveTab('spin')}
-          className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors mr-1
-            ${activeTab === 'spin'
-              ? 'border-b-2 border-spin-oxfordblue text-spin-oxfordblue bg-white -mb-px'
-              : 'text-gray-500 hover:text-gray-700'
-            }`}
-        >
-          <Settings2 className="w-3.5 h-3.5 shrink-0" />
-          Spin
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${STATUS_DOT[spinStatus]}`} />
-          {totalErrors > 0 && (
-            <span className="px-1 py-px text-[10px] rounded bg-red-100 text-red-700 font-semibold">{totalErrors}</span>
-          )}
-        </button>
-
-        {/* Component tabs */}
-        {compIds.map((id) => {
-          const pal    = componentTw(id)
-          const status = compStatuses[id] ?? 'idle'
-          const errs   = compErrors(id)
-          const isActive = activeTab === id
-          return (
-            <button
-              key={id}
-              onClick={() => setActiveTab(id)}
-              className={`flex items-center gap-1.5 px-3 text-xs font-medium whitespace-nowrap transition-colors
-                ${isActive
-                  ? `bg-white -mb-px ${pal.active} ${pal.text}`
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              <Cpu className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono">{id}</span>
-              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status === 'idle' ? pal.dot + ' opacity-30' : STATUS_DOT[status]}`} />
-              {errs > 0 && (
-                <span className="px-1 py-px text-[10px] rounded bg-red-100 text-red-700 font-semibold">{errs}</span>
-              )}
-            </button>
-          )
-        })}
+          {/* Component tabs */}
+          {compIds.map((id) => {
+            const pal  = componentTw(id)
+            const errs = compErrors(id)
+            const isActive = activeTab === id
+            return (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`tab ${isActive ? 'tab-active' : ''}`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pal.dot}`} />
+                <Cpu className="w-3.5 h-3.5 shrink-0" />
+                <span className="font-mono">{id}</span>
+                {errs > 0 && (
+                  <span className="badge-sm badge-red font-semibold">{errs}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
 
         {/* Spacer + filtered count */}
-        <div className="ml-auto flex items-center pl-4 pr-1 text-xs text-gray-400 tabular-nums whitespace-nowrap">
+        <div className="ml-auto flex items-center text-xs text-gray-400 tabular-nums whitespace-nowrap">
           {activeLines.length} / {allLines.length}
         </div>
       </div>
 
       {/* ── Secondary toolbar (filters) ─────────────────────────────────────── */}
       <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 bg-white shrink-0 flex-wrap">
-        {/* Level filter — shared */}
-        <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
+        {/* Level filter */}
+        <div className="tab-group">
           {LEVEL_OPTS.map(l => (
             <button
               key={l}
               onClick={() => setLevelFilter(l)}
-              className={`px-2 py-1 transition-colors ${levelFilter === l ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+              className={`tab ${levelFilter === l ? 'tab-active' : ''}`}
             >{l === 'ALL' ? 'All' : l}</button>
           ))}
         </div>
 
-        {/* Spin tab: stream filter */}
-        {activeTab === 'spin' && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
-            {STREAM_OPTS.map(s => (
-              <button
-                key={s.value}
-                onClick={() => setSpinStream(s.value)}
-                className={`px-2.5 py-1 transition-colors ${spinStream === s.value ? 'bg-spin-oxfordblue text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-              >{s.label}</button>
-            ))}
-          </div>
-        )}
-
-        {/* Component tab: stdout/stderr toggle */}
-        {activeTab !== 'spin' && (
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-medium">
-            {(['both', 'stdout', 'stderr'] as SubStream[]).map(s => (
-              <button
-                key={s}
-                onClick={() => setSubStream(s)}
-                className={`px-2.5 py-1 transition-colors ${subStream === s
-                  ? s === 'stderr' ? 'bg-rose-600 text-white' : 'bg-spin-oxfordblue text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'}`}
-              >{s}</button>
-            ))}
-          </div>
-        )}
+        {/* Filter input — co-located with the level filter so it's clear the
+            search scope is "within the visible log list", not a global search. */}
+        <div className="relative ml-auto">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            className="input text-xs py-1 pl-8 h-7 w-64"
+            placeholder="Filter logs…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
       {/* ── Time-range filter banner (Spin tab only) ─────────────────────────── */}
@@ -700,7 +657,7 @@ export default function LogViewer() {
             {traceLabel && <strong className="mx-1">{traceLabel}</strong>}
             {fromMs && <span> from {fmtMs(fromMs)}</span>}
             {toMs   && <span> to {fmtMs(toMs)}</span>}
-            {' '}— {spinLines.length} matching lines
+            {' '}&mdash; {spinLines.length} matching lines
           </span>
           <button
             className="ml-auto flex items-center gap-1 text-blue-600 hover:text-blue-800 font-medium"
@@ -724,13 +681,14 @@ export default function LogViewer() {
       <LogBody
         groups={renderGroups}
         compact={isCompact}
+        search={search}
         containerRef={containerRef}
         bottomRef={bottomRef}
         onScroll={handleScroll}
         empty={allLines.length === 0
-          ? 'Waiting for log output…'
+          ? 'Waiting for log output\u2026'
           : activeTab !== 'spin' && allLines.filter(l => l.raw.stream === 'component' && l.raw.component === activeTab).length === 0
-            ? `No invocation logs yet for "${activeTab}" — trigger a request to see output here`
+            ? `No invocation logs yet for "${activeTab}" \u2014 trigger a request to see output here`
             : 'No lines match your filter.'
         }
       />

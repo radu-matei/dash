@@ -93,9 +93,9 @@ function LangIcon({ comp, size = 16 }: { comp: ComponentInfo; size?: number }) {
 function StatusChip({ status, error }: { status: string; error: string }) {
   const cfg: Record<string, { cls: string; Icon: typeof CheckCircle2; label: string; spin?: boolean }> = {
     running:    { cls: 'badge-green',  Icon: CheckCircle2, label: 'Running'      },
-    starting:   { cls: 'badge-yellow', Icon: Clock,        label: 'Starting'     },
+    starting:   { cls: 'badge-amber',  Icon: Clock,        label: 'Starting'     },
     building:   { cls: 'badge-blue',   Icon: Hammer,       label: 'Building…', spin: true },
-    restarting: { cls: 'badge-yellow', Icon: Loader2,      label: 'Restarting…', spin: true },
+    restarting: { cls: 'badge-amber',  Icon: Loader2,      label: 'Restarting…', spin: true },
     stopped:    { cls: 'badge-gray',   Icon: Clock,        label: 'Stopped'      },
     error:      { cls: 'badge-red',    Icon: AlertCircle,  label: 'Error'        },
   }
@@ -367,7 +367,7 @@ function DetailPane({
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-semibold text-gray-900">{c.id}</span>
           {lang && <LangIcon comp={c} size={16} />}
-          <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Wasm</span>
+          <span className="badge badge-purple badge-sm">Wasm</span>
           {digest && (
             <code className="text-xs text-gray-400 font-mono" title={digest}>
               @{digest.slice(0, 19)}…
@@ -1147,12 +1147,13 @@ function TopologyGraph({
               <path
                 d={bez(e.x1 + NODE_W, e.y1, e.x2, e.y2)}
                 fill="none"
-                stroke="#10b981"
+                stroke={e.t.private ? '#9ca3af' : '#10b981'}
                 strokeWidth={2}
+                strokeDasharray={e.t.private ? '4 3' : undefined}
               />
               <polygon
                 points={`${e.x2},${e.y2} ${e.x2 - 7},${e.y2 - 4} ${e.x2 - 7},${e.y2 + 4}`}
-                fill="#10b981"
+                fill={e.t.private ? '#9ca3af' : '#10b981'}
               />
             </g>
           ))}
@@ -1233,11 +1234,29 @@ function TopologyGraph({
           const colors = TRIGGER_NODE_COLORS[meta.color]
           const iconBg = state === 'hi' ? colors.iconBgHi : colors.iconBgDef
 
-          // Sub-label: single route when there's only one trigger, otherwise count.
-          const singleT = group.triggers.length === 1 ? group.triggers[0] : null
-          const subLabel = singleT
-            ? (singleT.private ? 'private' : (singleT.route ?? singleT.channel ?? singleT.address ?? '—'))
-            : `${group.triggers.length} routes`
+          // Sub-label: single route when there's only one *public* trigger, otherwise
+          // a count of public routes with a "+N private" suffix if any private
+          // endpoints exist (private triggers are reachable only via local service
+          // chaining, never directly via the HTTP trigger — so they shouldn't be
+          // lumped into the "N routes" number).
+          const publicTriggers  = group.triggers.filter(t => !t.private)
+          const privateTriggers = group.triggers.filter(t =>  t.private)
+          const singleT = publicTriggers.length === 1 && privateTriggers.length === 0
+            ? publicTriggers[0]
+            : null
+          let subLabel: string
+          if (singleT) {
+            subLabel = singleT.route ?? singleT.channel ?? singleT.address ?? '—'
+          } else if (publicTriggers.length === 0 && privateTriggers.length > 0) {
+            subLabel = privateTriggers.length === 1
+              ? 'private'
+              : `${privateTriggers.length} private`
+          } else {
+            const base = `${publicTriggers.length} route${publicTriggers.length === 1 ? '' : 's'}`
+            subLabel = privateTriggers.length > 0
+              ? `${base} (+${privateTriggers.length} private)`
+              : base
+          }
 
           return (
             <div key={`tg-${gi}`}
@@ -1263,9 +1282,9 @@ function TopologyGraph({
               <div className="px-3 min-w-0 flex-1">
                 <div className={`text-xs font-bold uppercase tracking-wide flex items-center gap-1.5 ${colors.labelColor}`}>
                   {meta.label}
-                  {group.triggers.length > 1 && (
+                  {publicTriggers.length > 1 && (
                     <span className="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-black/10 tabular-nums">
-                      ×{group.triggers.length}
+                      ×{publicTriggers.length}
                     </span>
                   )}
                 </div>
@@ -1559,8 +1578,8 @@ function TopologyGraph({
 
 const SOURCE_BADGE: Record<string, string> = {
   'spin.toml':    'badge-blue',
-  '.env':         'badge-yellow',
-  'SPIN_VARIABLE':'badge-orange',
+  '.env':         'badge-amber',
+  'SPIN_VARIABLE':'badge-amber',
   '--variable':   'badge-green',
 }
 const SOURCE_LABEL: Record<string, string> = {
@@ -1682,7 +1701,7 @@ function VariablePane({
         {/* Add variable shortcut */}
         {canMutate && (
           <button
-            className="w-full btn-secondary text-xs justify-center"
+            className="w-full btn-accent text-xs justify-center"
             onClick={onAddVar}
           >
             <Plus className="w-3.5 h-3.5" /> Add another variable
@@ -2119,7 +2138,7 @@ export default function AppOverview() {
   if (loading) return (
     <div className="flex-1 p-6 space-y-4">
       {[1, 2, 3].map(i => (
-        <div key={i} className="card p-4">
+        <div key={i} className="card p-5">
           <div className="skeleton h-5 w-48 mb-2" />
           <div className="skeleton h-4 w-64" />
         </div>
@@ -2171,7 +2190,7 @@ export default function AppOverview() {
           {/* Add dropdown menu */}
           <div className="relative" ref={addMenuRef}>
             <button
-              className="btn-secondary text-xs"
+              className="btn-accent text-xs"
               disabled={!canMutate}
               onClick={() => setAddMenuOpen(o => !o)}
               title={canMutate ? 'Add a component, variable, or service binding' : 'Requires --allow-edits'}
@@ -2272,7 +2291,7 @@ export default function AppOverview() {
               </div>
             )}
 
-            <div className="card p-6">
+            <div className="card p-5">
               {components.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-32 text-gray-400 gap-2">
                   <Network className="w-8 h-8 opacity-25" />

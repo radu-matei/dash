@@ -259,6 +259,7 @@ export interface HurlTestFile {
   path: string
   dir: string
   content?: string
+  lastRun?: HurlRunResult
 }
 
 export interface HurlTestListResponse {
@@ -288,6 +289,9 @@ export const saveHurlFile = (path: string, content: string) =>
 export const runHurlTest = (path: string, variables?: Record<string, string>) =>
   post<HurlRunResult>('/api/hurl-run', { path, variables })
 
+export const runAllHurlTests = (paths?: string[], variables?: Record<string, string>) =>
+  post<{ results: HurlRunResult[] }>('/api/hurl-run-all', { paths, variables })
+
 export const deleteHurlFile = (path: string) =>
   post<MutationResult>('/api/hurl-delete', { path })
 
@@ -298,44 +302,47 @@ export interface KVKeysResponse {
   keys: string[]
 }
 
-export interface KVEntryResponse {
-  store: string
-  key: string
-  value: string
-}
-
 /** List all KV store names from the app config. */
 export const getKVStores = () => get<string[]>('/api/kv/stores')
 
-/** List all keys in a store (proxied to the injected KV explorer component). */
+/** List all keys in a store. */
 export const getKVKeys = (store: string) =>
   get<KVKeysResponse>(`/api/kv/stores/${encodeURIComponent(store)}/keys`)
 
-/** Get the value of a key (key is base64-encoded in the URL by the component). */
-export const getKVKey = (store: string, key: string) =>
-  get<KVEntryResponse>(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeSafeKey(key)}`)
+/** Get the raw bytes of a key value. Returns an ArrayBuffer for binary safety. */
+export async function getKVKeyRaw(store: string, key: string): Promise<ArrayBuffer> {
+  const res = await fetch(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeURIComponent(key)}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((body as { error?: string }).error ?? res.statusText)
+  }
+  return res.arrayBuffer()
+}
 
-/** Set (upsert) a key-value pair. */
-export const setKVKey = (store: string, key: string, value: string) =>
-  post<{ ok: boolean }>(`/api/kv/stores/${encodeURIComponent(store)}/keys`, { key, value })
+/** Set (upsert) a key-value pair. Value is sent as raw bytes. */
+export async function setKVKey(store: string, key: string, value: string | ArrayBuffer): Promise<{ ok: boolean }> {
+  const body = typeof value === 'string' ? new TextEncoder().encode(value) : value
+  const res = await fetch(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeURIComponent(key)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error((err as { error?: string }).error ?? res.statusText)
+  }
+  return res.json()
+}
 
 /** Delete a key from a store. */
 export async function deleteKVKey(store: string, key: string): Promise<{ ok: boolean }> {
-  const res = await fetch(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeSafeKey(key)}`, {
+  const res = await fetch(`/api/kv/stores/${encodeURIComponent(store)}/keys/${encodeURIComponent(key)}`, {
     method: 'DELETE',
   })
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error((body as { error?: string }).error ?? res.statusText)
   }
-  return res.json()
-}
-
-/** Encode a key for the spin-kv-explorer URL format.
- *  Matches DecodeSafeKey in the Go component: replace `-` back to `/`,
- *  then base64.StdEncoding.DecodeString(). So we base64-encode and only
- *  replace `/` with `-`, keeping `+` and `=` padding intact. */
-function encodeSafeKey(key: string): string {
-  return btoa(key).replace(/\//g, '-')
+  return { ok: true }
 }
 

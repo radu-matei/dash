@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -94,6 +92,7 @@ func run(cmd *cobra.Command, args []string) error {
 	// collector so multiple dashboard instances can stitch cross-app traces.
 	otelReceiver := otel.NewReceiver(otelForwardTo)
 	metricsReceiver := otel.NewMetricsReceiver(500, otelForwardTo)
+	logsReceiver := otel.NewLogsReceiver(hub.PublishComponent, otelForwardTo)
 
 	// Locate the spin binary.
 	spinBin := os.Getenv("SPIN_BIN_PATH")
@@ -103,10 +102,21 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// Build the environment injection for OTel.
 	// Use http/protobuf (the OTLP default) — Spin does not support http/json.
+	//
+	// OTEL_METRIC_EXPORT_INTERVAL: Spin's PeriodicReader (opentelemetry_sdk
+	// 0.28, Tokio-backed) reads this env var on startup (see
+	// periodic_reader_with_async_runtime.rs:59 in the SDK). Default is 60s,
+	// which makes metric cards look stale for interactive dashboards. 5s
+	// strikes a reasonable balance: metrics feel live without flooding the
+	// in-memory ring buffer in internal/otel/metrics_receiver.go. Honour a
+	// caller-provided value if the user already set it in their shell.
 	otelEndpoint := fmt.Sprintf("http://localhost:%d", otelPort)
 	extraEnv := []string{
 		"OTEL_EXPORTER_OTLP_ENDPOINT=" + otelEndpoint,
 		"OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+	}
+	if os.Getenv("OTEL_METRIC_EXPORT_INTERVAL") == "" {
+		extraEnv = append(extraEnv, "OTEL_METRIC_EXPORT_INTERVAL=5000")
 	}
 
 	// Always use a temporary manifest so the KV explorer component can be
@@ -115,6 +125,20 @@ func run(cmd *cobra.Command, args []string) error {
 	// picking up newly added (or removed) KV bindings.
 	manifestPath := kvexplorer.ManifestPath(cwd)
 	spinArgs := append([]string{"up", "--from", manifestPath}, args...)
+
+	// Silence component stdout/stderr on Spin's process pipes so the dashboard
+	// log view isn't polluted with untagged "stdout"/"stderr" lines. Component
+	// output still reaches the dashboard via OTel logs (which carry component_id),
+	// so we get the same data with proper attribution. Spin's own system output
+	// (Serving http://..., Available Routes, etc.) is emitted directly and is
+	// unaffected by --quiet.
+	//
+	// Skipped when the user passed --follow or --quiet themselves — --quiet
+	// conflicts_with --follow in Spin, and we don't want to override an explicit
+	// debugging choice.
+	if !argsContainAny(args, "--follow", "--quiet", "-q") {
+		spinArgs = append(spinArgs, "--quiet")
+	}
 
 	kvStores := kvexplorer.CollectKVStores(cfg)
 	if len(kvStores) > 0 {
@@ -181,18 +205,10 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	// Start OTLP HTTP receiver on its own mux.
-	// Accept /v1/logs and /v1/metrics with a no-op 200 to silence SDK errors;
-	// only /v1/traces is parsed and surfaced in the UI.
 	otelMux := http.NewServeMux()
 	otelMux.HandleFunc("/v1/traces", otelReceiver.HandleOTLP)
 	otelMux.HandleFunc("/v1/metrics", metricsReceiver.HandleOTLP)
-	otelMux.HandleFunc("/v1/logs", func(w http.ResponseWriter, r *http.Request) {
-		if otelForwardTo != "" {
-			body, _ := io.ReadAll(r.Body)
-			go forwardOTLP(strings.TrimRight(otelForwardTo, "/")+"/v1/logs", r.Header.Get("Content-Type"), body)
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	otelMux.HandleFunc("/v1/logs", logsReceiver.HandleOTLP)
 
 	otelSrv := &http.Server{Handler: otelMux}
 	go func() {
@@ -271,6 +287,19 @@ func collectSpinVarEnv() map[string]string {
 	return out
 }
 
+// argsContainAny reports whether any of the given flag names appears as a
+// standalone arg or as the prefix of a '--flag=value' form in args.
+func argsContainAny(args []string, flags ...string) bool {
+	for _, a := range args {
+		for _, f := range flags {
+			if a == f || strings.HasPrefix(a, f+"=") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // parseSpinArgs scans the extra args forwarded to 'spin up' and extracts:
 //   - --variable key=value  (also -v key=value)
 //   - --listen address
@@ -301,23 +330,6 @@ func parseSpinArgs(args []string) (varOverrides map[string]string, listenAddr st
 		}
 	}
 	return
-}
-
-// forwardOTLP fires a best-effort POST of body to url.  Used for /v1/logs
-// which has no dedicated receiver struct but still needs forwarding.
-func forwardOTLP(url, contentType string, body []byte) {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return
-	}
-	_ = resp.Body.Close()
 }
 
 // normalizeListenAddr converts a spin --listen value like "0.0.0.0:3002" or

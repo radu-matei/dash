@@ -50,6 +50,9 @@ func New(opts Options) (*http.ServeMux, error) {
 	// writes triggered by mutation handlers (add-variable, add-binding, etc.).
 	cfgMu := &sync.RWMutex{}
 
+	// hurlStore holds the most recent run result for each .hurl test file.
+	hurlStore := newHurlLastRuns(opts.Dir)
+
 	// --- Read-only API routes ---
 	mux.Handle("/api/logs", opts.Hub)
 	mux.HandleFunc("/api/status", statusHandler(opts.Runner))
@@ -65,8 +68,9 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/kv/stores/", kvProxyHandler(opts.Runner))
 
 	// --- Hurl HTTP testing routes ---
-	mux.HandleFunc("/api/hurl-tests", hurlTestsHandler(opts.Dir))
-	mux.HandleFunc("/api/hurl-run", hurlRunHandler(opts.Dir, opts.Runner, opts.Cfg))
+	mux.HandleFunc("/api/hurl-tests", hurlTestsHandler(opts.Dir, hurlStore))
+	mux.HandleFunc("/api/hurl-run", hurlRunHandler(opts.Dir, opts.Runner, opts.Cfg, hurlStore))
+	mux.HandleFunc("/api/hurl-run-all", hurlRunAllHandler(opts.Dir, opts.Runner, opts.Cfg, hurlStore))
 
 	// --- Mutation routes (require --allow-edits) ---
 	mutationGuard := func(h http.HandlerFunc) http.HandlerFunc {
@@ -87,9 +91,6 @@ func New(opts Options) (*http.ServeMux, error) {
 	mux.HandleFunc("/api/remove-binding", mutationGuard(removeBindingHandler(&opts, cfgMu)))
 	mux.HandleFunc("/api/restart", restartHandler(opts.Runner))
 	mux.HandleFunc("/api/build-restart", buildAndRestartHandler(&opts))
-
-	// Tail .spin/logs/<comp>_{stdout,stderr}.txt and forward new lines to hub.
-	go watchComponentLogs(opts.Dir, opts.Hub)
 
 	// --- SPA static file handler ---
 	distFS, err := fs.Sub(embeddedUI, "ui/dist")

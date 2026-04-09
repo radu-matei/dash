@@ -78,8 +78,8 @@ export default function EditSpinTomlModal({ onClose, onSaved }: Props) {
   const dirty = content !== original
 
   return (
-    <div className="fixed inset-0 z-50 flex items-stretch bg-black/50 backdrop-blur-sm">
-      <div className="flex flex-col w-full max-w-4xl mx-auto my-6 bg-white rounded-2xl shadow-2xl overflow-hidden">
+    <div className="modal-backdrop flex items-stretch">
+      <div className="flex flex-col w-full max-w-4xl mx-auto my-6 modal overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
@@ -126,7 +126,7 @@ export default function EditSpinTomlModal({ onClose, onSaved }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 border-t border-gray-100 px-6 py-3 flex items-center justify-between gap-3 bg-gray-50">
+        <div className="shrink-0 flex items-center justify-between gap-3 mt-6 pt-4 border-t border-gray-100 px-6 py-3 bg-gray-50">
           <div className="flex-1 min-w-0">
             {error && (
               <div className="flex items-start gap-2 text-xs text-red-600">

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spinframework/dash/internal/config"
@@ -16,10 +17,11 @@ import (
 
 // HurlTestFile represents a discovered .hurl test file.
 type HurlTestFile struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"` // relative to project root
-	Dir     string `json:"dir"`
-	Content string `json:"content,omitempty"`
+	Name    string         `json:"name"`
+	Path    string         `json:"path"` // relative to project root
+	Dir     string         `json:"dir"`
+	Content string         `json:"content,omitempty"`
+	LastRun *HurlRunResult `json:"lastRun,omitempty"`
 }
 
 // HurlRunResult is returned after executing a hurl test.
@@ -33,6 +35,75 @@ type HurlRunResult struct {
 	ExitCode    int    `json:"exitCode"`
 }
 
+// hurlLastRuns stores the most recent run result for each test file path.
+type hurlLastRuns struct {
+	mu   sync.RWMutex
+	runs map[string]HurlRunResult
+	dir  string // project directory, for persisting to disk
+}
+
+const lastRunsFile = ".spin/dash-test-runs.json"
+
+func newHurlLastRuns(dir string) *hurlLastRuns {
+	s := &hurlLastRuns{
+		runs: make(map[string]HurlRunResult),
+		dir:  dir,
+	}
+	s.load()
+	return s
+}
+
+func (s *hurlLastRuns) store(path string, result HurlRunResult) {
+	s.mu.Lock()
+	s.runs[path] = result
+	s.mu.Unlock()
+	s.persist()
+}
+
+func (s *hurlLastRuns) get(path string) *HurlRunResult {
+	s.mu.RLock()
+	r, ok := s.runs[path]
+	s.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return &r
+}
+
+// persist writes the last-run map to disk so it survives restarts.
+func (s *hurlLastRuns) persist() {
+	s.mu.RLock()
+	data, err := json.Marshal(s.runs)
+	s.mu.RUnlock()
+	if err != nil {
+		return
+	}
+	p := filepath.Join(s.dir, lastRunsFile)
+	_ = os.MkdirAll(filepath.Dir(p), 0o755)
+	_ = os.WriteFile(p, data, 0o644)
+}
+
+// load reads persisted last-run results from disk.
+func (s *hurlLastRuns) load() {
+	p := filepath.Join(s.dir, lastRunsFile)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return
+	}
+	var runs map[string]HurlRunResult
+	if err := json.Unmarshal(data, &runs); err != nil {
+		return
+	}
+	// Strip output to keep the file small — we only need status/timing for the dashboard.
+	for k, v := range runs {
+		v.Output = ""
+		runs[k] = v
+	}
+	s.mu.Lock()
+	s.runs = runs
+	s.mu.Unlock()
+}
+
 // skipDirs contains directories we skip when scanning for .hurl files.
 var skipDirs = map[string]bool{
 	".git": true, "node_modules": true, "target": true, ".spin": true,
@@ -40,46 +111,104 @@ var skipDirs = map[string]bool{
 	"venv": true, ".next": true,
 }
 
+// discoverHurlFiles walks dir and returns all .hurl files found.
+func discoverHurlFiles(dir string) []HurlTestFile {
+	var files []HurlTestFile
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			if skipDirs[info.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".hurl") {
+			relPath, _ := filepath.Rel(dir, path)
+			files = append(files, HurlTestFile{
+				Name: info.Name(),
+				Path: relPath,
+				Dir:  filepath.Dir(relPath),
+			})
+		}
+		return nil
+	})
+	if files == nil {
+		files = []HurlTestFile{}
+	}
+	return files
+}
+
+// runHurlFile executes a single hurl test file and stores the result.
+func runHurlFile(dir, relPath string, variables map[string]string, runner *process.Runner, cfg *config.AppConfig, store *hurlLastRuns) HurlRunResult {
+	absPath := filepath.Join(dir, relPath)
+
+	args := []string{"--test", "--very-verbose", "--no-color", "--error-format", "long"}
+
+	addr := runner.ListenAddr()
+	if addr == "" {
+		addr = cfg.ListenAddr
+	}
+	if addr != "" {
+		args = append(args, "--variable", "base_url="+addr)
+	}
+
+	for k, v := range variables {
+		args = append(args, "--variable", k+"="+v)
+	}
+	args = append(args, absPath)
+
+	cmd := exec.Command("hurl", args...)
+	cmd.Dir = dir
+
+	startTime := time.Now()
+	output, err := cmd.CombinedOutput()
+	endTime := time.Now()
+
+	exitCode := 0
+	success := true
+	if err != nil {
+		success = false
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = -1
+		}
+	}
+
+	result := HurlRunResult{
+		Success:     success,
+		Output:      string(output),
+		DurationMs:  endTime.Sub(startTime).Milliseconds(),
+		StartTimeMs: startTime.UnixMilli(),
+		EndTimeMs:   endTime.UnixMilli(),
+		File:        relPath,
+		ExitCode:    exitCode,
+	}
+
+	store.store(relPath, result)
+	return result
+}
+
 // hurlTestsHandler serves GET /api/hurl-tests — discovers all .hurl files in the project.
-func hurlTestsHandler(dir string) http.HandlerFunc {
+func hurlTestsHandler(dir string, store *hurlLastRuns) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			jsonErr(w, http.StatusMethodNotAllowed, "GET required")
 			return
 		}
 
-		var files []HurlTestFile
-		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil
-			}
-			if info.IsDir() {
-				if skipDirs[info.Name()] {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if strings.HasSuffix(info.Name(), ".hurl") {
-				relPath, _ := filepath.Rel(dir, path)
-				files = append(files, HurlTestFile{
-					Name: info.Name(),
-					Path: relPath,
-					Dir:  filepath.Dir(relPath),
-				})
-			}
-			return nil
-		})
+		files := discoverHurlFiles(dir)
 
-		if files == nil {
-			files = []HurlTestFile{}
+		// Attach last run results to each file.
+		for i := range files {
+			files[i].LastRun = store.get(files[i].Path)
 		}
-
-		// Check if hurl is available.
-		hurlInstalled := isHurlInstalled()
 
 		jsonOK(w, map[string]interface{}{
 			"files":         files,
-			"hurlInstalled": hurlInstalled,
+			"hurlInstalled": isHurlInstalled(),
 			"defaultDir":    "tests",
 		})
 	}
@@ -165,7 +294,7 @@ func hurlFileHandler(dir string, allowMutations bool) http.HandlerFunc {
 }
 
 // hurlRunHandler serves POST /api/hurl-run — executes a hurl test file.
-func hurlRunHandler(dir string, runner *process.Runner, cfg *config.AppConfig) http.HandlerFunc {
+func hurlRunHandler(dir string, runner *process.Runner, cfg *config.AppConfig, store *hurlLastRuns) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			jsonErr(w, http.StatusMethodNotAllowed, "POST required")
@@ -201,49 +330,61 @@ func hurlRunHandler(dir string, runner *process.Runner, cfg *config.AppConfig) h
 			return
 		}
 
-		// Build the hurl command.
-		args := []string{"--test", "--very-verbose", "--no-color", "--error-format", "long"}
+		result := runHurlFile(dir, req.Path, req.Variables, runner, cfg, store)
+		jsonOK(w, result)
+	}
+}
 
-		// Inject the Spin app's base URL as a variable so tests can use {{base_url}}.
-		addr := runner.ListenAddr()
-		if addr == "" {
-			addr = cfg.ListenAddr
+// hurlRunAllHandler serves POST /api/hurl-run-all — runs multiple hurl test files sequentially.
+func hurlRunAllHandler(dir string, runner *process.Runner, cfg *config.AppConfig, store *hurlLastRuns) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			jsonErr(w, http.StatusMethodNotAllowed, "POST required")
+			return
 		}
-		if addr != "" {
-			args = append(args, "--variable", "base_url="+addr)
+
+		if !isHurlInstalled() {
+			jsonErr(w, http.StatusPreconditionFailed,
+				"hurl is not installed. Install it from https://hurl.dev — e.g. `brew install hurl`")
+			return
 		}
 
-		for k, v := range req.Variables {
-			args = append(args, "--variable", k+"="+v)
+		var req struct {
+			Paths     []string          `json:"paths"`
+			Variables map[string]string `json:"variables"`
 		}
-		args = append(args, absPath)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
 
-		cmd := exec.Command("hurl", args...)
-		cmd.Dir = dir
-
-		startTime := time.Now()
-		output, err := cmd.CombinedOutput()
-		endTime := time.Now()
-
-		exitCode := 0
-		success := true
-		if err != nil {
-			success = false
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				exitCode = exitErr.ExitCode()
-			} else {
-				exitCode = -1
+		// If no paths specified, discover all .hurl files.
+		paths := req.Paths
+		if len(paths) == 0 {
+			for _, f := range discoverHurlFiles(dir) {
+				paths = append(paths, f.Path)
 			}
 		}
 
-		jsonOK(w, HurlRunResult{
-			Success:     success,
-			Output:      string(output),
-			DurationMs:  endTime.Sub(startTime).Milliseconds(),
-			StartTimeMs: startTime.UnixMilli(),
-			EndTimeMs:   endTime.UnixMilli(),
-			File:        req.Path,
-			ExitCode:    exitCode,
+		var results []HurlRunResult
+		for _, p := range paths {
+			if !isSafePath(p) {
+				continue
+			}
+			absPath := filepath.Join(dir, p)
+			if _, err := os.Stat(absPath); os.IsNotExist(err) {
+				continue
+			}
+			result := runHurlFile(dir, p, req.Variables, runner, cfg, store)
+			results = append(results, result)
+		}
+
+		if results == nil {
+			results = []HurlRunResult{}
+		}
+
+		jsonOK(w, map[string]interface{}{
+			"results": results,
 		})
 	}
 }
