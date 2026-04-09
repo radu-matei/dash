@@ -1147,12 +1147,13 @@ function TopologyGraph({
               <path
                 d={bez(e.x1 + NODE_W, e.y1, e.x2, e.y2)}
                 fill="none"
-                stroke="#10b981"
+                stroke={e.t.private ? '#9ca3af' : '#10b981'}
                 strokeWidth={2}
+                strokeDasharray={e.t.private ? '4 3' : undefined}
               />
               <polygon
                 points={`${e.x2},${e.y2} ${e.x2 - 7},${e.y2 - 4} ${e.x2 - 7},${e.y2 + 4}`}
-                fill="#10b981"
+                fill={e.t.private ? '#9ca3af' : '#10b981'}
               />
             </g>
           ))}
@@ -1233,11 +1234,29 @@ function TopologyGraph({
           const colors = TRIGGER_NODE_COLORS[meta.color]
           const iconBg = state === 'hi' ? colors.iconBgHi : colors.iconBgDef
 
-          // Sub-label: single route when there's only one trigger, otherwise count.
-          const singleT = group.triggers.length === 1 ? group.triggers[0] : null
-          const subLabel = singleT
-            ? (singleT.private ? 'private' : (singleT.route ?? singleT.channel ?? singleT.address ?? '—'))
-            : `${group.triggers.length} routes`
+          // Sub-label: single route when there's only one *public* trigger, otherwise
+          // a count of public routes with a "+N private" suffix if any private
+          // endpoints exist (private triggers are reachable only via local service
+          // chaining, never directly via the HTTP trigger — so they shouldn't be
+          // lumped into the "N routes" number).
+          const publicTriggers  = group.triggers.filter(t => !t.private)
+          const privateTriggers = group.triggers.filter(t =>  t.private)
+          const singleT = publicTriggers.length === 1 && privateTriggers.length === 0
+            ? publicTriggers[0]
+            : null
+          let subLabel: string
+          if (singleT) {
+            subLabel = singleT.route ?? singleT.channel ?? singleT.address ?? '—'
+          } else if (publicTriggers.length === 0 && privateTriggers.length > 0) {
+            subLabel = privateTriggers.length === 1
+              ? 'private'
+              : `${privateTriggers.length} private`
+          } else {
+            const base = `${publicTriggers.length} route${publicTriggers.length === 1 ? '' : 's'}`
+            subLabel = privateTriggers.length > 0
+              ? `${base} (+${privateTriggers.length} private)`
+              : base
+          }
 
           return (
             <div key={`tg-${gi}`}
@@ -1263,9 +1282,9 @@ function TopologyGraph({
               <div className="px-3 min-w-0 flex-1">
                 <div className={`text-xs font-bold uppercase tracking-wide flex items-center gap-1.5 ${colors.labelColor}`}>
                   {meta.label}
-                  {group.triggers.length > 1 && (
+                  {publicTriggers.length > 1 && (
                     <span className="text-[9px] font-normal px-1.5 py-0.5 rounded-full bg-black/10 tabular-nums">
-                      ×{group.triggers.length}
+                      ×{publicTriggers.length}
                     </span>
                   )}
                 </div>

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { AlertCircle, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Cpu, Search, X } from 'lucide-react'
 import type { TraceGroup } from './types'
 import type { SpanNode } from './types'
-import { buildTree, flattenTree, spanComponent, descendantCount, fmtDuration, fmtTime, EXEC_WASM_PREFIX } from './traceUtils'
+import { buildTree, flattenTree, spanComponent, descendantCount, fmtDuration, fmtTime, httpUrlFromAttrs, EXEC_WASM_PREFIX } from './traceUtils'
 import SpanDetail from './SpanDetail'
 
 // ─── Tree line annotations ───────────────────────────────────────────────────
@@ -229,7 +229,7 @@ export default function Waterfall({
 
       {/* Column headers */}
       <div className="flex border-b border-gray-200 text-xs font-semibold text-gray-500 uppercase tracking-wider bg-gray-50 shrink-0">
-        <div className="w-72 shrink-0 px-4 py-2">Span</div>
+        <div className="w-[28rem] shrink-0 px-4 py-2">Span</div>
         <div className="w-16 shrink-0 px-2 py-2 text-right">Duration</div>
         <div className="flex-1 py-2 pl-4 pr-4 relative">
           <div className="flex justify-between text-gray-400 font-mono font-normal normal-case tracking-normal">
@@ -275,7 +275,7 @@ export default function Waterfall({
             ].join(' ')}
           >
             {/* Name with tree connectors */}
-            <div className="w-72 shrink-0 flex items-center gap-1.5 py-2 pr-2 overflow-hidden relative" style={{ paddingLeft: `${12 + node.depth * INDENT_PX}px` }}>
+            <div className="w-[28rem] shrink-0 flex items-center gap-1.5 py-2 pr-2 overflow-hidden relative" style={{ paddingLeft: `${12 + node.depth * INDENT_PX}px` }}>
               {/* Tree connector lines: vertical lines for ancestor depths that have more siblings */}
               {continues.map((cont, i) => {
                 if (i === node.depth - 1) {
@@ -321,18 +321,28 @@ export default function Waterfall({
               {node.span.name?.startsWith(EXEC_WASM_PREFIX) ? (<>
                   <Cpu className="w-3 h-3 shrink-0" style={{ color }} />
                   <span className={`font-semibold truncate min-w-0 ${isError ? 'text-red-700' : ''}`} style={isError ? undefined : { color }} title={node.span.name}>{node.span.name.slice(EXEC_WASM_PREFIX.length)}</span>
-              </>) : (
-                <span className={`truncate min-w-0 font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={node.span.name}>
-                  {node.span.name}
-                </span>
-              )}
+              </>) : (() => {
+                const url = httpUrlFromAttrs(node.span.attrs ?? {})
+                return (
+                  <div className={`flex items-baseline gap-1.5 min-w-0 flex-1 font-mono ${isError ? 'text-red-700' : 'text-gray-800'}`} title={url ? `${node.span.name} ${url}` : node.span.name}>
+                    <span className="shrink-0">{node.span.name}</span>
+                    {url && (
+                      <span className="truncate min-w-0 text-gray-500">{url}</span>
+                    )}
+                  </div>
+                )
+              })()}
               {isCollapsed && hiddenCount > 0 && (
                 <span className="shrink-0 text-[10px] font-mono px-1 py-px rounded bg-gray-100 text-gray-500">
                   +{hiddenCount}
                 </span>
               )}
               {effectiveComp && components.length > 1 && !node.span.name?.startsWith(EXEC_WASM_PREFIX) && (
-                <span className="ml-auto shrink-0 text-[10px] font-mono px-1 py-px rounded" style={{ color, opacity: 0.8 }}>
+                <span
+                  className="ml-1 shrink-0 text-[10px] font-mono px-1 py-px rounded max-w-[6rem] truncate"
+                  style={{ color, opacity: 0.8 }}
+                  title={effectiveComp}
+                >
                   {effectiveComp}
                 </span>
               )}

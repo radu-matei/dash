@@ -118,7 +118,7 @@ function HighlightText({ text, search }: { text: string; search: string }) {
     <>
       {parts.map((part, i) =>
         re.test(part)
-          ? <mark key={i} className="bg-amber-100 text-inherit rounded-sm px-px">{part}</mark>
+          ? <mark key={i} className="bg-amber-200 text-inherit rounded-sm px-px">{part}</mark>
           : part
       )}
     </>
@@ -301,9 +301,18 @@ const LEVEL_OPTS: LevelFilter[] = ['ALL', 'ERROR', 'WARN', 'INFO', 'DEBUG', 'TRA
 
 // ─── Log row renderers ───────────────────────────────────────────────────────
 
-/** Full 4-column layout used in the Spin tab. */
+/** Full 5-column layout used in the Spin tab.
+ *  Columns: level · timestamp · component · stream · message.
+ *  The component column shows l.raw.component when the log was OTel-tagged
+ *  (stream === 'component'). For raw stdout/stderr lines from `spin up`'s
+ *  process pipes it's blank — Spin doesn't tag those lines with a component
+ *  id on its own. The stream column always shows the origin (stdout / stderr
+ *  / system / component) so the two columns together convey both "who" and
+ *  "which pipe". */
 function SpinLogRow({ l, search }: { l: ParsedLine; search: string }) {
   const rowCls = l.level ? LEVEL_ROW[l.level] : ''
+  const compId = l.raw.stream === 'component' ? l.raw.component ?? '' : ''
+  const compPal = compId ? componentTw(compId) : null
   return (
     <div className={`group/row flex items-start px-4 py-px border-b border-gray-50 leading-5 hover:bg-gray-50/70 transition-colors ${rowCls}`}>
       <span className="w-14 shrink-0 pt-px">
@@ -311,8 +320,23 @@ function SpinLogRow({ l, search }: { l: ParsedLine; search: string }) {
       </span>
       <span className="w-4 shrink-0" />
       <span className="w-24 shrink-0 text-gray-400 tabular-nums pt-px">{l.timestamp ?? ''}</span>
-      <span className="w-36 shrink-0 text-gray-400 truncate pt-px" title={l.source ?? l.raw.stream}>
-        {l.source ? l.source.split('::').pop() : l.raw.stream}
+      <span className="w-28 shrink-0 truncate pt-px flex items-center gap-1.5" title={compId || '—'}>
+        {compId ? (
+          <>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${compPal!.dot}`} />
+            <span className={`font-mono truncate ${compPal!.text}`}>{compId}</span>
+          </>
+        ) : (
+          <span className="text-gray-300">—</span>
+        )}
+      </span>
+      <span
+        className="w-28 shrink-0 text-gray-400 truncate pt-px"
+        title={l.source ?? l.raw.stream}
+      >
+        {l.source
+          ? l.source.split('::').pop()
+          : l.raw.stream === 'component' ? (l.raw.subStream ?? 'stdout') : l.raw.stream}
       </span>
       <span className="flex-1 flex items-center gap-1 min-w-0">
         <span className={`flex-1 break-all ${msgColor(l.level)}`}>
@@ -459,9 +483,14 @@ export default function LogViewer() {
     return true
   }
 
-  // Lines for the Spin tab (process stdout/stderr + system)
+  // Lines for the Spin tab — an aggregated "all sources" view containing both
+  // Spin's own process output (system / build / startup) and OTel-structured
+  // component logs with proper per-component attribution. Dashboard launches
+  // Spin with --quiet so component stdout/stderr no longer shows up as
+  // untagged "stdout/stderr" lines on Spin's process pipes; component output
+  // arrives exclusively through OTel (stream === 'component'), carrying its
+  // component id.
   const spinLines = useMemo(() => allLines.filter(l => {
-    if (l.raw.stream === 'component') return false
     if (!levelOk(l) || !searchOk(l) || !timeOk(l)) return false
     return true
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -496,7 +525,7 @@ export default function LogViewer() {
   }
 
   const totalErrors = useMemo(() =>
-    allLines.filter(l => l.raw.stream !== 'component' && l.level === 'ERROR').length
+    allLines.filter(l => l.level === 'ERROR').length
   , [allLines])
 
   const compErrors = (id: string) =>
@@ -519,16 +548,6 @@ export default function LogViewer() {
           <span className="text-xs text-gray-400">{allLines.length} lines</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Search */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input
-              className="input text-xs py-1 pl-8 h-8 w-56"
-              placeholder="Search logs…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
           {/* Clear */}
           <button className="btn-ghost btn-icon" onClick={clear} title="Clear log">
             <Trash2 className="w-3.5 h-3.5" />
@@ -616,6 +635,17 @@ export default function LogViewer() {
           ))}
         </div>
 
+        {/* Filter input — co-located with the level filter so it's clear the
+            search scope is "within the visible log list", not a global search. */}
+        <div className="relative ml-auto">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            className="input text-xs py-1 pl-8 h-7 w-64"
+            placeholder="Filter logs…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
       </div>
 
       {/* ── Time-range filter banner (Spin tab only) ─────────────────────────── */}

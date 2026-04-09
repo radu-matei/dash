@@ -69,6 +69,7 @@ export function groupTraces(spans: Span[], routeMap: Map<string, string>): Trace
       spans: sorted,
       httpMethod: rootAttrs['http.method'] ?? rootAttrs['http.request.method'],
       httpStatus: rootAttrs['http.response.status_code'] ?? rootAttrs['http.status_code'],
+      httpPath: httpPathFromAttrs(rootAttrs),
     }
   }).sort((a, b) => b.startMs - a.startMs)
 }
@@ -154,3 +155,40 @@ export const SKIP_ATTRS = new Set(['busy_ns', 'idle_ns', 'code.filepath', 'code.
 
 const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]/g
 export const stripAnsi = (s: string) => s.replace(ANSI_RE, '')
+
+// ─── HTTP attribute extraction ────────────────────────────────────────────────
+
+/**
+ * Extract the request path from a span's attrs. Tries common OTel conventions
+ * in priority order. Returns undefined when no path attribute is present.
+ * For full URLs, parses out just the path+query to keep the list row compact.
+ */
+export function httpPathFromAttrs(attrs: Record<string, string>): string | undefined {
+  const direct = attrs['url.path'] ?? attrs['http.target'] ?? attrs['http.route']
+  if (direct) return direct
+  const full = attrs['url.full'] ?? attrs['http.url']
+  if (full) {
+    try {
+      const u = new URL(full)
+      return u.pathname + u.search
+    } catch {
+      return full
+    }
+  }
+  return undefined
+}
+
+/**
+ * Extract a displayable URL or host+path from a span's attrs. Used by the
+ * waterfall to label outbound HTTP client spans. Prefers the full URL so
+ * users can see the destination host; falls back to path-only.
+ */
+export function httpUrlFromAttrs(attrs: Record<string, string>): string | undefined {
+  const full = attrs['url.full'] ?? attrs['http.url']
+  if (full) return full
+  const host = attrs['server.address'] ?? attrs['net.peer.name']
+  const path = attrs['url.path'] ?? attrs['http.target'] ?? attrs['http.route']
+  if (host && path) return `${host}${path}`
+  if (host) return host
+  return path
+}

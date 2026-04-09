@@ -5,7 +5,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  Activity, AlertCircle, ArrowRight, BarChart2, Clock, Pause, Zap,
+  Activity, AlertCircle, ArrowRight, BarChart2, Clock, Info, Pause, RefreshCw, Zap,
 } from 'lucide-react'
 import {
   getTraces, getOtelMetrics,
@@ -30,6 +30,48 @@ function fmtTime(iso: string): string {
       hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
     })
   } catch { return '' }
+}
+
+/**
+ * Human-readable descriptions for known Spin OTel metrics. These override /
+ * augment the `series.description` field returned by the OTLP exporter, which
+ * is often empty or terse. Sourced directly from the Spin runtime:
+ *
+ *   - spin.request_count:  crates/trigger-http/src/server.rs,
+ *                          crates/trigger-redis/src/lib.rs
+ *   - spin.component_cpu_time / spin.component_memory_used / *_on_init:
+ *                          crates/factors-executor/src/lib.rs
+ *
+ * Keep in sync with the Spin source when adding new entries.
+ */
+const METRIC_DESCRIPTIONS: Record<string, { title: string; description: string }> = {
+  'spin.request_count': {
+    title: 'Inbound trigger invocations',
+    description:
+      'Count of inbound trigger invocations received by the Spin runtime. Incremented once ' +
+      'per HTTP request or Redis message dispatched to a component. Does NOT count outbound ' +
+      'HTTP calls made by components (fetch, etc.) or inter-component service chaining ' +
+      '(spin.internal). Tagged by trigger_type, component_id, app_id.',
+  },
+  'spin.component_cpu_time': {
+    title: 'Component CPU time',
+    description:
+      'Histogram of CPU time consumed per component execution, in seconds. Recorded after ' +
+      'each invocation completes. Only emitted when Spin is built with the cpu-time-metrics ' +
+      'feature; may be absent on default builds.',
+  },
+  'spin.component_memory_used': {
+    title: 'Component memory (runtime)',
+    description:
+      'Histogram of memory consumed by the component instance during execution, in bytes. ' +
+      'Recorded after each invocation completes.',
+  },
+  'spin.component_memory_used_on_init': {
+    title: 'Component memory (init)',
+    description:
+      'Histogram of memory consumed by the component instance immediately after instantiation, ' +
+      'in bytes. Useful for spotting initialization bloat.',
+  },
 }
 
 // ─── Unit-aware metric formatters ─────────────────────────────────────────────
@@ -266,13 +308,34 @@ function MetricCard({ series, activeComps, colorMap }: {
   const gradBase = `grad-${series.name.replace(/\./g, '-')}`
   const getColor = (v: string) => colorMap.get(v) ?? componentHex(v)
 
+  // Known-metric metadata overrides the OTLP description (often empty).
+  const known = METRIC_DESCRIPTIONS[series.name]
+  const friendlyTitle = known?.title
+  const friendlyDescription = known?.description ?? series.description
+
   return (
     <div className="card rounded-14 p-5">
       {/* Header */}
       <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="text-sm font-semibold text-gray-900 font-mono">{series.name}</p>
-          {series.description && <p className="text-xs text-gray-400 mt-0.5">{series.description}</p>}
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">
+              {friendlyTitle ?? series.name}
+            </p>
+            {friendlyDescription && (
+              <span className="shrink-0 text-gray-300" title={friendlyDescription}>
+                <Info className="w-3.5 h-3.5" />
+              </span>
+            )}
+          </div>
+          {friendlyTitle && (
+            <p className="text-[11px] text-gray-400 font-mono mt-0.5 truncate" title={series.name}>
+              {series.name}
+            </p>
+          )}
+          {!friendlyTitle && friendlyDescription && (
+            <p className="text-xs text-gray-400 mt-0.5">{friendlyDescription}</p>
+          )}
           {unit && <p className="text-xs text-gray-400 font-mono mt-0.5">unit: {unit === 'By' ? 'bytes' : unit === 's' ? 'seconds' : unit}</p>}
         </div>
         <span className={`badge ${kindBadge} ml-2 shrink-0`}>{series.kind}</span>
@@ -557,6 +620,9 @@ export default function MetricsPage() {
     return () => { active = false; ctrl.abort() }
   }, [])
 
+  // Wake the poll loop's sleep early, forcing an immediate fetch on click.
+  const refreshNow = () => wakeRef.current?.()
+
   if (loading) return (
     <div className="p-6 space-y-4">
       {[1,2,3].map(i => <div key={i} className="card rounded-14 p-4 h-24 skeleton" />)}
@@ -569,6 +635,13 @@ export default function MetricsPage() {
       <div className="page-header bg-white sticky top-0 z-10 shrink-0">
         <h1 className="page-title">Metrics</h1>
         <div className="flex items-center gap-2">
+          <button
+            onClick={refreshNow}
+            className="btn-ghost btn-icon"
+            title="Refresh now"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
           <div className="tab-group">
             <button
               onClick={() => setPaused(false)}

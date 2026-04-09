@@ -74,12 +74,19 @@ export default function TraceList({
               </div>
             </td>
             <td className="px-4 py-2.5">
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap min-w-0">
                 {t.hasErrors && <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
                 {t.httpMethod && (
                   <span className="badge badge-gray badge-sm rounded-full font-mono">{t.httpMethod}</span>
                 )}
-                <span className="font-semibold text-gray-900">{t.rootName}</span>
+                {t.httpPath ? (
+                  <span
+                    className="font-mono text-gray-900 truncate max-w-[32ch]"
+                    title={t.httpPath}
+                  >{t.httpPath}</span>
+                ) : (
+                  <span className="font-semibold text-gray-900">{t.rootName}</span>
+                )}
                 {t.component && (() => {
                   const color = colorMap.get(t.component) ?? '#9ca3af'
                   const isDownstream = compFilter !== 'all' && t.component !== compFilter

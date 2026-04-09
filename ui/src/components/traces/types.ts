@@ -14,6 +14,8 @@ export interface TraceGroup {
   spans: Span[]
   httpMethod?: string
   httpStatus?: string
+  /** Request path extracted from root-span attrs (url.path / http.target / http.route). */
+  httpPath?: string
 }
 
 export interface SpanNode { span: Span; children: SpanNode[]; depth: number }
